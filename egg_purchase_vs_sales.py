@@ -299,25 +299,29 @@ for row in tracker_data[t_header_idx + 1:]:
 print(f"  Found {len(tracker_monthly)} tracker months")
 
 
-# --- Hash-based change detection ---
-print("\nChecking for data changes...")
-current_hash = compute_data_hash(purchase_data, all_sales_raw, tracker_data)
+# --- Hash-based change detection (only in CI) ---
+IS_CI = os.environ.get("GITHUB_ACTIONS") == "true"
 now_wat = wat_now()
 
-previous_state = fetch_data_state()
-if previous_state and previous_state.get("hash") == current_hash:
-    print("  No changes detected in source data. Skipping update.")
-    # Still update last_checked
-    previous_state["last_checked"] = now_wat
-    save_data_state(previous_state)
-    exit(0)
+if IS_CI:
+    print("\nChecking for data changes...")
+    current_hash = compute_data_hash(purchase_data, all_sales_raw, tracker_data)
 
-print("  Data has changed (or first run). Proceeding with update...")
-new_state = {
-    "hash": current_hash,
-    "last_checked": now_wat,
-    "last_updated": now_wat,
-}
+    previous_state = fetch_data_state()
+    if previous_state and previous_state.get("hash") == current_hash:
+        print("  No changes detected in source data. Skipping update.")
+        previous_state["last_checked"] = now_wat
+        save_data_state(previous_state)
+        exit(0)
+
+    print("  Data has changed (or first run). Proceeding with update...")
+    new_state = {
+        "hash": current_hash,
+        "last_checked": now_wat,
+        "last_updated": now_wat,
+    }
+else:
+    print("\nRunning locally — skipping hash check.")
 
 
 # --- Merge all data by year+month ---
@@ -421,7 +425,10 @@ num_cols = len(COLUMN_HEADERS)
 # Prepare all cell values
 all_output = []
 # Row 1: title in C1 with embedded timestamp
-title_text = f"PULLUS - Egg Purchase vs Sales Monthly Summary  |  Last Updated: {now_wat}"
+title_main = "PULLUS - Egg Purchase vs Sales Monthly Summary"
+title_separator = "  |  "
+title_timestamp = f"Last Updated: {now_wat}"
+title_text = title_main + title_separator + title_timestamp
 title_row = ["", ""] + [title_text] + [""] * (num_cols - 3)
 all_output.append(title_row)
 # Row 2: section headers (only first cell of each section)
@@ -544,6 +551,22 @@ requests.append({
         "range": grid_range(0, 1, 0, num_cols),
         "cell": {"userEnteredFormat": cell_format(DARK_NAVY, WHITE, bold=True, font_size=14, h_align="CENTER")},
         "fields": "userEnteredFormat",
+    }
+})
+# Make the timestamp portion smaller and lighter within the title cell
+timestamp_start = len(title_main)  # where separator starts
+requests.append({
+    "updateCells": {
+        "range": grid_range(0, 1, 2, 3),  # C1 only (merged title cell)
+        "rows": [{
+            "values": [{
+                "textFormatRuns": [
+                    {"startIndex": 0, "format": {"fontSize": 14, "bold": True, "foregroundColor": rgb(WHITE)}},
+                    {"startIndex": timestamp_start, "format": {"fontSize": 9, "bold": False, "italic": True, "foregroundColor": rgb("#B0B0B0")}},
+                ]
+            }]
+        }],
+        "fields": "textFormatRuns",
     }
 })
 
@@ -956,8 +979,9 @@ target_book.batch_update({"requests": logic_requests})
 
 print("Done! Logic & Definitions sheet created.")
 
-# Save data state for the workflow to commit
-save_data_state(new_state)
+# Save data state for the workflow to commit (CI only)
+if IS_CI:
+    save_data_state(new_state)
 
 # Print summary for verification
 print("\n--- Summary ---")
