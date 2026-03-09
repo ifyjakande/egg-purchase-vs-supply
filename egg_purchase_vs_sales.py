@@ -420,10 +420,14 @@ num_cols = len(COLUMN_HEADERS)
 
 # Prepare all cell values
 all_output = []
-# Row 1: title in C1 (after frozen cols), A1-B1 blank
+# Row 1: "Last Updated" timestamp
+timestamp_str = f"Last Updated: {now_wat}"
+timestamp_row = [timestamp_str] + [""] * (num_cols - 1)
+all_output.append(timestamp_row)
+# Row 2: title in C2 (after frozen cols), A2-B2 blank
 title_row = ["", ""] + ["PULLUS - Egg Purchase vs Sales Monthly Summary"] + [""] * (num_cols - 3)
 all_output.append(title_row)
-# Row 2: section headers (only first cell of each section)
+# Row 3: section headers (only first cell of each section)
 section_row = [""] * num_cols
 section_row[0] = "Period"
 section_row[2] = "PURCHASE"
@@ -447,11 +451,6 @@ totals_row = ["TOTAL", ""]
 for col_idx in range(2, num_cols):
     totals_row.append(int(sum(r[col_idx] for r in rows)))
 all_output.append(totals_row)
-
-# "Last Updated" row
-timestamp_str = f"Last Updated: {now_wat}"
-timestamp_row = [timestamp_str, ""] + [""] * (num_cols - 2)
-all_output.append(timestamp_row)
 
 # Clear and write
 target_ws.clear()
@@ -524,11 +523,38 @@ total_rows = len(all_output)
 
 requests = []
 
-# --- Merges ---
-# Title row: merge C1:W1 only (A1:B1 left blank for frozen cols)
+# --- "Last Updated" timestamp row formatting (row 0) ---
+# Merge A1:B1 for the timestamp
 requests.append({
     "mergeCells": {
-        "range": grid_range(0, 1, 2, num_cols),
+        "range": grid_range(0, 1, 0, 2),
+        "mergeType": "MERGE_ALL",
+    }
+})
+requests.append({
+    "repeatCell": {
+        "range": grid_range(0, 1, 0, num_cols),
+        "cell": {
+            "userEnteredFormat": {
+                "backgroundColor": rgb(WHITE),
+                "textFormat": {
+                    "foregroundColor": rgb("#888888"),
+                    "bold": False,
+                    "italic": True,
+                    "fontSize": 9,
+                },
+                "horizontalAlignment": "LEFT",
+            }
+        },
+        "fields": "userEnteredFormat",
+    }
+})
+
+# --- Merges ---
+# Title row (row 1): merge C2:W2 only (A2:B2 left blank for frozen cols)
+requests.append({
+    "mergeCells": {
+        "range": grid_range(1, 2, 2, num_cols),
         "mergeType": "MERGE_ALL",
     }
 })
@@ -537,15 +563,15 @@ section_merges = [(0, 2), (2, 7), (7, 11), (11, 12), (12, 17), (17, 23)]
 for start, end in section_merges:
     requests.append({
         "mergeCells": {
-            "range": grid_range(1, 2, start, end),
+            "range": grid_range(2, 3, start, end),
             "mergeType": "MERGE_ALL",
         }
     })
 
-# --- Title row format ---
+# --- Title row format (row 1) ---
 requests.append({
     "repeatCell": {
-        "range": grid_range(0, 1, 0, num_cols),
+        "range": grid_range(1, 2, 0, num_cols),
         "cell": {"userEnteredFormat": cell_format(DARK_NAVY, WHITE, bold=True, font_size=14, h_align="CENTER")},
         "fields": "userEnteredFormat",
     }
@@ -563,7 +589,7 @@ section_colors = [
 for start, end, color in section_colors:
     requests.append({
         "repeatCell": {
-            "range": grid_range(1, 2, start, end),
+            "range": grid_range(2, 3, start, end),
             "cell": {"userEnteredFormat": cell_format(color, WHITE, bold=True, font_size=11, h_align="CENTER")},
             "fields": "userEnteredFormat",
         }
@@ -583,14 +609,14 @@ for start, end, bg, fg in col_header_colors:
     fmt["wrapStrategy"] = "WRAP"
     requests.append({
         "repeatCell": {
-            "range": grid_range(2, 3, start, end),
+            "range": grid_range(3, 4, start, end),
             "cell": {"userEnteredFormat": fmt},
             "fields": "userEnteredFormat",
         }
     })
 
 # --- Data row formatting ---
-data_start_row = 3  # 0-indexed row 3 = spreadsheet row 4
+data_start_row = 4  # 0-indexed row 4 = spreadsheet row 5
 for i in range(len(rows)):
     row_idx = data_start_row + i
     bg = ROW_WHITE if i % 2 == 0 else ROW_ALT
@@ -644,7 +670,7 @@ for i in range(len(rows)):
         })
 
 # --- Totals row formatting ---
-totals_row_idx = total_rows - 2  # second to last (before timestamp row)
+totals_row_idx = total_rows - 1  # last row
 requests.append({
     "repeatCell": {
         "range": grid_range(totals_row_idx, totals_row_idx + 1, 0, num_cols),
@@ -699,40 +725,12 @@ requests.append({
     }
 })
 
-# --- "Last Updated" timestamp row formatting ---
-timestamp_row_idx = total_rows - 1  # last row
-# Merge A:B for the timestamp
-requests.append({
-    "mergeCells": {
-        "range": grid_range(timestamp_row_idx, timestamp_row_idx + 1, 0, 2),
-        "mergeType": "MERGE_ALL",
-    }
-})
-requests.append({
-    "repeatCell": {
-        "range": grid_range(timestamp_row_idx, timestamp_row_idx + 1, 0, num_cols),
-        "cell": {
-            "userEnteredFormat": {
-                "backgroundColor": rgb(WHITE),
-                "textFormat": {
-                    "foregroundColor": rgb("#888888"),
-                    "bold": False,
-                    "italic": True,
-                    "fontSize": 9,
-                },
-                "horizontalAlignment": "LEFT",
-            }
-        },
-        "fields": "userEnteredFormat",
-    }
-})
-
 # --- Borders ---
-# Thin borders on all cells (excluding timestamp row)
+# Thin borders on all cells (excluding timestamp row at top)
 thin_border = {"style": "SOLID", "color": rgb("#D0D0D0")}
 requests.append({
     "updateBorders": {
-        "range": grid_range(0, total_rows - 1, 0, num_cols),
+        "range": grid_range(1, total_rows, 0, num_cols),
         "top": thin_border,
         "bottom": thin_border,
         "left": thin_border,
@@ -748,21 +746,21 @@ section_boundaries = [0, 2, 7, 11, 12, 17]
 for col in section_boundaries:
     requests.append({
         "updateBorders": {
-            "range": grid_range(0, total_rows - 1, col, min(col + 1, num_cols)),
+            "range": grid_range(1, total_rows, col, min(col + 1, num_cols)),
             "left": thick_border,
         }
     })
 # Right edge
 requests.append({
     "updateBorders": {
-        "range": grid_range(0, total_rows - 1, num_cols - 1, num_cols),
+        "range": grid_range(1, total_rows, num_cols - 1, num_cols),
         "right": thick_border,
     }
 })
 # Top and bottom thick borders
 requests.append({
     "updateBorders": {
-        "range": grid_range(0, 1, 0, num_cols),
+        "range": grid_range(1, 2, 0, num_cols),
         "top": thick_border,
     }
 })
@@ -819,7 +817,7 @@ requests.append({
         "properties": {
             "sheetId": sheet_id,
             "gridProperties": {
-                "frozenRowCount": 3,
+                "frozenRowCount": 4,
                 "frozenColumnCount": 2,
                 "rowCount": total_rows,
                 "columnCount": num_cols,
