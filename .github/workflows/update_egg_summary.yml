@@ -1,0 +1,44 @@
+name: Update Egg Purchase vs Sales Summary
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install gspread google-auth
+
+      - run: python egg_purchase_vs_sales.py
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
+          PURCHASE_SHEET_ID: ${{ secrets.PURCHASE_SHEET_ID }}
+          TRACKER_SHEET_ID: ${{ secrets.TRACKER_SHEET_ID }}
+          SALES_STAFF_JSON: ${{ secrets.SALES_STAFF_JSON }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update data state on data-state branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f /tmp/data_state.json ]; then
+            echo "No data_state.json to commit (script may have skipped update)"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin data-state || true
+          git checkout data-state 2>/dev/null || git checkout --orphan data-state
+          git reset --hard || true
+          cp /tmp/data_state.json data_state.json
+          git add data_state.json
+          git diff --staged --quiet || (git commit -m "Update data state" && git push origin data-state)
