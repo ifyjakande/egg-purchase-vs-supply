@@ -351,9 +351,9 @@ for key in sorted_keys:
     good_sold = s["eggs"]
     broken_sold = s["broken"]  # tracked for reconciliation, not counted as sales
     cracked_sold = s["cracked"]
-    total_sold = good_sold + cracked_sold - broken_sold
+    total_sold = good_sold + cracked_sold  # broken eggs are losses, not sales
 
-    variance = usable - total_sold
+    variance = usable - total_sold - broken_sold
 
     v_sent = victor_abuja[key]
     f_data = femi_abuja[key]
@@ -856,10 +856,10 @@ logic_content = [
     ["", "Good Eggs Sold", "Whole eggs sold to customers"],
     ["", "Broken Eggs (Loss)", "Broken eggs recorded in sales sheets - these are losses, not sales"],
     ["", "Cracked Eggs Sold", "Cracked eggs sold at a lower price"],
-    ["", "Total Eggs Sold", "Good + Cracked minus Broken (losses deducted)"],
+    ["", "Total Eggs Sold", "Good + Cracked only. Broken eggs are excluded because they are losses"],
     ["", "", ""],
     ["P vs S", "", ""],
-    ["", "Surplus / Deficit", "Eggs Available for Sale minus Total Eggs Sold"],
+    ["", "Surplus / Deficit", "Eggs Available for Sale minus Total Eggs Sold minus Broken Eggs (Loss)"],
     ["", "", "Positive = stock remaining or sales not yet recorded"],
     ["", "", "Negative = sold more than purchased that month (using prior stock)"],
     ["", "", ""],
