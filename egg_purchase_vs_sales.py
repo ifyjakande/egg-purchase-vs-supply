@@ -2,10 +2,12 @@ import gspread
 from google.oauth2.service_account import Credentials
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
+import base64
 import json
 import hashlib
 import os
 import subprocess
+import urllib.request
 
 # --- Config from environment variables ---
 GOOGLE_SERVICE_ACCOUNT_JSON = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
@@ -14,9 +16,19 @@ PURCHASE_SHEET_ID = os.environ["PURCHASE_SHEET_ID"]
 TRACKER_SHEET_ID = os.environ["TRACKER_SHEET_ID"]
 SALES_STAFF = json.loads(os.environ["SALES_STAFF_JSON"])
 
+GOOGLE_SPACE_WEBHOOK_URL = os.environ.get("GOOGLE_SPACE_WEBHOOK_URL")
+
 PURCHASE_WORKSHEET = "Daily Egg Purchase Log"
 SALES_WORKSHEET = "Daily Sales Log"
 TRACKER_WORKSHEET = "Kaduna to Abuja"
+
+TRACKER_TABS = {
+    "Kaduna to Abuja": datetime(2026, 3, 10),
+    "Kaduna to Kano": datetime(2026, 2, 27),
+    "Kaduna Local Sales": datetime(2026, 1, 1),
+}
+
+BREAKAGE_THRESHOLD = 0.6  # percent
 
 EGG_PRODUCTS = {"eggs", "cracked egg", "broken", "broken egg"}
 
@@ -48,6 +60,19 @@ def parse_date(date_str):
         try:
             dt = datetime.strptime(s, fmt)
             return (dt.year, dt.strftime("%B"))
+        except ValueError:
+            continue
+    return None
+
+
+def parse_date_obj(date_str):
+    """Parse date string to a datetime object. Returns None on failure."""
+    if not date_str or not str(date_str).strip():
+        return None
+    s = str(date_str).strip()
+    for fmt in ("%d-%b-%Y", "%d-%B-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt)
         except ValueError:
             continue
     return None
@@ -97,7 +122,6 @@ def fetch_data_state():
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode == 0 and result.stdout.strip():
-            import base64
             content = base64.b64decode(result.stdout.strip()).decode()
             return json.loads(content)
     except Exception as e:
@@ -299,13 +323,83 @@ for row in tracker_data[t_header_idx + 1:]:
 print(f"  Found {len(tracker_monthly)} tracker months")
 
 
+# --- Read additional tracker tabs for breakage alerts ---
+print("Reading additional tracker tabs for breakage alerts...")
+all_tracker_raw = {TRACKER_WORKSHEET: tracker_data}
+for tab_name in TRACKER_TABS:
+    if tab_name == TRACKER_WORKSHEET:
+        continue  # already read
+    print(f"  Reading tracker tab: {tab_name}...")
+    tab_ws = tracker_book.worksheet(tab_name)
+    all_tracker_raw[tab_name] = tab_ws.get_all_values()
+
+
+# --- Breakage/Cracking Alert Logic ---
+print("Checking for breakage/cracking alerts...")
+breakage_alerts = []
+
+for tab_name, cutoff_date in TRACKER_TABS.items():
+    tab_data = all_tracker_raw[tab_name]
+
+    # Find header row
+    tab_header_idx = None
+    for i, row in enumerate(tab_data):
+        row_lower = [str(c).strip().lower() for c in row]
+        if "date" in row_lower and "eggs shipped" in row_lower:
+            tab_header_idx = i
+            break
+
+    if tab_header_idx is None:
+        print(f"  WARNING: Could not find headers for {tab_name}, skipping")
+        continue
+
+    tab_headers = tab_data[tab_header_idx]
+    col_date = find_col(tab_headers, "Date")
+    col_customer = find_col(tab_headers, "Customer Name")
+    col_shipped = find_col(tab_headers, "Eggs Shipped")
+    col_broken = find_col(tab_headers, "Eggs Broken")
+    col_cracked = find_col(tab_headers, "Cracked Eggs")
+
+    for row in tab_data[tab_header_idx + 1:]:
+        date_str = safe_get(row, col_date)
+        dt = parse_date_obj(date_str)
+        if dt is None or dt <= cutoff_date:
+            continue
+
+        shipped = parse_num(safe_get(row, col_shipped))
+        if shipped <= 0:
+            continue
+
+        broken = parse_num(safe_get(row, col_broken))
+        cracked = parse_num(safe_get(row, col_cracked))
+        broken_pct = broken / shipped * 100
+        cracked_pct = cracked / shipped * 100
+
+        if broken_pct > BREAKAGE_THRESHOLD or cracked_pct > BREAKAGE_THRESHOLD:
+            customer = str(safe_get(row, col_customer)).strip()
+            breakage_alerts.append({
+                "tab": tab_name,
+                "date": dt.strftime("%d-%b-%Y"),
+                "customer": customer,
+                "shipped": int(shipped),
+                "broken": int(broken),
+                "cracked": int(cracked),
+                "broken_pct": broken_pct,
+                "cracked_pct": cracked_pct,
+            })
+
+print(f"  Found {len(breakage_alerts)} shipments exceeding {BREAKAGE_THRESHOLD}% threshold")
+
+
 # --- Hash-based change detection (only in CI) ---
 IS_CI = os.environ.get("GITHUB_ACTIONS") == "true"
 now_wat = wat_now()
+previous_state = None
+new_state = {}
 
 if IS_CI:
     print("\nChecking for data changes...")
-    current_hash = compute_data_hash(purchase_data, all_sales_raw, tracker_data)
+    current_hash = compute_data_hash(purchase_data, all_sales_raw, all_tracker_raw)
 
     previous_state = fetch_data_state()
     if previous_state and previous_state.get("hash") == current_hash:
@@ -978,6 +1072,99 @@ logic_requests.append({
 target_book.batch_update({"requests": logic_requests})
 
 print("Done! Logic & Definitions sheet created.")
+
+# --- Send Breakage Alerts to Google Space ---
+if breakage_alerts and GOOGLE_SPACE_WEBHOOK_URL:
+    print("\nProcessing breakage alerts...")
+
+    # Load previously alerted shipments from data state
+    alerted_set = set()
+    if IS_CI and previous_state:
+        alerted_set = set(previous_state.get("alerted_shipments", []))
+
+    # Build unique keys and filter out already-alerted shipments
+    new_alerts = []
+    for alert in breakage_alerts:
+        key = f"{alert['tab']}|{alert['date']}|{alert['customer']}|{alert['shipped']}"
+        if key not in alerted_set:
+            new_alerts.append((key, alert))
+
+    if new_alerts:
+        # Group alerts by tab
+        grouped = {}
+        for key, alert in new_alerts:
+            tab = alert["tab"]
+            if tab not in grouped:
+                grouped[tab] = []
+            grouped[tab].append((key, alert))
+
+        # Build card message
+        sections = []
+        for tab, tab_alerts in grouped.items():
+            widgets = []
+            for key, a in tab_alerts:
+                broken_color = "#CC0000" if a["broken_pct"] > BREAKAGE_THRESHOLD else "#4A4A4A"
+                cracked_color = "#CC0000" if a["cracked_pct"] > BREAKAGE_THRESHOLD else "#4A4A4A"
+                widgets.append({"decoratedText": {
+                    "startIcon": {"materialIcon": {"name": "warning", "fill": True}},
+                    "topLabel": f"{a['date']}  \u2022  {a['customer']}",
+                    "text": (
+                        f"Shipped: <b>{a['shipped']:,}</b>  |  "
+                        f"Broken: <font color=\"{broken_color}\"><b>{a['broken']:,} ({a['broken_pct']:.2f}%)</b></font>  |  "
+                        f"Cracked: <font color=\"{cracked_color}\"><b>{a['cracked']:,} ({a['cracked_pct']:.2f}%)</b></font>"
+                    ),
+                    "wrapText": True,
+                }})
+            sections.append({
+                "header": tab.upper(),
+                "widgets": widgets,
+            })
+
+        card_payload = {
+            "cardsV2": [{
+                "cardId": "breakage-alert",
+                "card": {
+                    "header": {
+                        "title": "Egg Breakage/Cracking Alert",
+                        "subtitle": f"Threshold: {BREAKAGE_THRESHOLD}%  |  {len(new_alerts)} shipment(s) flagged",
+                    },
+                    "sectionDividerStyle": "SOLID_DIVIDER",
+                    "sections": sections,
+                },
+            }],
+        }
+        payload = json.dumps(card_payload).encode("utf-8")
+
+        req = urllib.request.Request(
+            GOOGLE_SPACE_WEBHOOK_URL,
+            data=payload,
+            headers={"Content-Type": "application/json; charset=UTF-8"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                print(f"  Alert sent to Google Space (HTTP {resp.status})")
+        except Exception as e:
+            print(f"  WARNING: Failed to send alert to Google Space: {e}")
+
+        # Update alerted set
+        for key, _ in new_alerts:
+            alerted_set.add(key)
+
+        if IS_CI:
+            new_state["alerted_shipments"] = sorted(alerted_set)
+    else:
+        print("  All flagged shipments already alerted. No new alerts to send.")
+        if IS_CI:
+            new_state["alerted_shipments"] = sorted(alerted_set)
+elif breakage_alerts:
+    print(f"\n  {len(breakage_alerts)} breakage alerts found but GOOGLE_SPACE_WEBHOOK_URL not set. Skipping.")
+else:
+    print("\n  No breakage alerts to send.")
+
+# Preserve alerted_shipments in state when alerts weren't processed
+if IS_CI and "alerted_shipments" not in new_state and previous_state:
+    new_state["alerted_shipments"] = previous_state.get("alerted_shipments", [])
 
 # Save data state for the workflow to commit (CI only)
 if IS_CI:

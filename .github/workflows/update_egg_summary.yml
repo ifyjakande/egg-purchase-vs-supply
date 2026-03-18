@@ -27,6 +27,7 @@ jobs:
           PURCHASE_SHEET_ID: ${{ secrets.PURCHASE_SHEET_ID }}
           TRACKER_SHEET_ID: ${{ secrets.TRACKER_SHEET_ID }}
           SALES_STAFF_JSON: ${{ secrets.SALES_STAFF_JSON }}
+          GOOGLE_SPACE_WEBHOOK_URL: ${{ secrets.GOOGLE_SPACE_WEBHOOK_URL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update data state on data-state branch
