@@ -18,7 +18,7 @@ PURCHASE_WORKSHEET = "Daily Egg Purchase Log"
 SALES_WORKSHEET = "Daily Sales Log"
 TRACKER_WORKSHEET = "Kaduna to Abuja"
 
-EGG_PRODUCTS = {"eggs", "cracked egg", "broken"}
+EGG_PRODUCTS = {"eggs", "cracked egg", "broken", "broken egg"}
 
 MONTH_ORDER = {
     "January": 1, "February": 2, "March": 3, "April": 4,
@@ -241,7 +241,7 @@ for staff_name, sheet_id in SALES_STAFF.items():
                 sales_monthly[key]["eggs"] += pieces
             elif product_type == "cracked egg":
                 sales_monthly[key]["cracked"] += pieces
-            elif product_type == "broken":
+            elif product_type in ("broken", "broken egg"):
                 sales_monthly[key]["broken"] += pieces
 
         # Femi Abuja
@@ -250,7 +250,7 @@ for staff_name, sheet_id in SALES_STAFF.items():
                 femi_abuja[key]["eggs"] += pieces
             elif product_type == "cracked egg":
                 femi_abuja[key]["cracked"] += pieces
-            elif product_type == "broken":
+            elif product_type in ("broken", "broken egg"):
                 femi_abuja[key]["broken"] += pieces
 
 print(f"  Found {len(sales_monthly)} sales months")
