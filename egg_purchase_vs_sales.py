@@ -1147,7 +1147,7 @@ if breakage_alerts and GOOGLE_SPACE_WEBHOOK_URL:
                 print(f"  Alert sent to Google Space (HTTP {resp.status})")
                 alert_sent = True
         except Exception as e:
-            print(f"  WARNING: Failed to send alert to Google Space: {e}")
+            print(f"  WARNING: Failed to send alert to Google Space: {type(e).__name__}")
 
         # Only mark as alerted if the POST succeeded
         if alert_sent:
