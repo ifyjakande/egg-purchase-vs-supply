@@ -1141,15 +1141,18 @@ if breakage_alerts and GOOGLE_SPACE_WEBHOOK_URL:
             headers={"Content-Type": "application/json; charset=UTF-8"},
             method="POST",
         )
+        alert_sent = False
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 print(f"  Alert sent to Google Space (HTTP {resp.status})")
+                alert_sent = True
         except Exception as e:
             print(f"  WARNING: Failed to send alert to Google Space: {e}")
 
-        # Update alerted set
-        for key, _ in new_alerts:
-            alerted_set.add(key)
+        # Only mark as alerted if the POST succeeded
+        if alert_sent:
+            for key, _ in new_alerts:
+                alerted_set.add(key)
 
         if IS_CI:
             new_state["alerted_shipments"] = sorted(alerted_set)
