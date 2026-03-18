@@ -351,7 +351,7 @@ for key in sorted_keys:
     good_sold = s["eggs"]
     broken_sold = s["broken"]  # tracked for reconciliation, not counted as sales
     cracked_sold = s["cracked"]
-    total_sold = good_sold + cracked_sold  # broken eggs are losses, not sales
+    total_sold = good_sold + cracked_sold - broken_sold
 
     variance = usable - total_sold
 
@@ -856,7 +856,7 @@ logic_content = [
     ["", "Good Eggs Sold", "Whole eggs sold to customers"],
     ["", "Broken Eggs (Loss)", "Broken eggs recorded in sales sheets - these are losses, not sales"],
     ["", "Cracked Eggs Sold", "Cracked eggs sold at a lower price"],
-    ["", "Total Eggs Sold", "Good + Cracked only. Broken eggs are excluded because they are losses"],
+    ["", "Total Eggs Sold", "Good + Cracked minus Broken (losses deducted)"],
     ["", "", ""],
     ["P vs S", "", ""],
     ["", "Surplus / Deficit", "Eggs Available for Sale minus Total Eggs Sold"],
