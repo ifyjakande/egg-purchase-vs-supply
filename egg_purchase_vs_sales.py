@@ -1173,15 +1173,3 @@ if IS_CI and "alerted_shipments" not in new_state and previous_state:
 if IS_CI:
     save_data_state(new_state)
 
-# Print summary for verification
-print("\n--- Summary ---")
-for key in sorted_keys:
-    year, month = key
-    p = purchase_monthly[key]
-    s = sales_monthly[key]
-    usable = p["total_eggs"] - p["broken"]
-    total_sold = s["eggs"] + s["cracked"]
-    v = victor_abuja[key]
-    f = femi_abuja[key]
-    print(f"  {month} {year}: Purchased={int(p['total_eggs'])}, Usable={int(usable)}, "
-          f"Sold={int(total_sold)}, Victor Abuja={int(v)}, Femi Abuja={int(f['eggs']+f['cracked']+f['broken'])}")
