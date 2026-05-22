@@ -444,6 +444,7 @@ sorted_keys = sorted(all_keys, key=lambda k: (k[0], MONTH_ORDER.get(k[1], 0)))
 
 print(f"\nTotal months: {len(sorted_keys)}")
 
+prev_carry = 0  # eggs rolled over from prior month (surpluses only)
 rows = []
 for key in sorted_keys:
     year, month = key
@@ -454,15 +455,20 @@ for key in sorted_keys:
     total_eggs = p["total_eggs"]
     broken_p = p["broken"]
     cracked_p = p["cracked"]
-    usable = total_eggs - broken_p  # cracked eggs are also passed to sales
+    usable = total_eggs - broken_p  # informational: eggs intact on arrival (cracked still sellable)
 
     good_sold = s["eggs"]
-    broken_sold = s["broken"]  # tracked for reconciliation, not counted as sales
+    broken_sold = s["broken"]  # broken loss recorded in sales — already includes arrival breakage
     cracked_sold = s["cracked"]
-    total_sold = good_sold + cracked_sold  # broken eggs are losses, not sales
+    total_sold = good_sold + cracked_sold
     samples = samples_monthly[key]
 
-    variance = usable - total_sold - broken_sold - samples
+    # P vs S with asymmetric carry-over: surpluses roll forward, deficits are bucketed
+    prior_surplus = prev_carry
+    adjusted_sd = total_eggs + prior_surplus - total_sold - broken_sold - samples
+    unaccounted = max(0, -adjusted_sd)
+    carried_forward = max(0, adjusted_sd)
+    prev_carry = carried_forward
 
     v_sent = victor_abuja[key]
     f_data = femi_abuja[key]
@@ -485,7 +491,7 @@ for key in sorted_keys:
         month, year,
         crates, total_eggs, broken_p, cracked_p, usable,
         good_sold, broken_sold, cracked_sold, total_sold, samples,
-        variance,
+        prior_surplus, adjusted_sd, unaccounted, carried_forward,
         v_sent, f_good, f_broken, f_cracked, transfer_var,
         t_shipped, t_delivered, t_broken, t_cracked,
         t_victor_vs_tracker, t_delivered_vs_femi,
@@ -522,7 +528,7 @@ COLUMN_HEADERS = [
     "Crates Purchased", "Total Eggs Purchased", "Broken Eggs (Purchase)",
     "Cracked Eggs (Purchase)", "Eggs Available for Sale",
     "Good Eggs Sold", "Broken Eggs (Loss)", "Cracked Eggs Sold", "Total Eggs Sold", "Samples",
-    "Surplus / Deficit",
+    "Eggs Carried In", "Surplus / Deficit", "Unaccounted", "Eggs On Hand",
     "Victor Eggs Sent (Abuja)", "Femi Good Eggs (Abuja)", "Femi Broken (Abuja)",
     "Femi Cracked (Abuja)", "Transfer Variance (Sent - Received)",
     "Tracker Shipped", "Tracker Delivered", "Transit Broken",
@@ -533,11 +539,14 @@ num_cols = len(COLUMN_HEADERS)
 
 # Prepare all cell values
 all_output = []
-# Row 1: title in C1 with embedded timestamp
+# Row 1: title in C1 with embedded timestamp and current holding
+# Current holding = "Eggs On Hand" of the latest month row (column index 15)
+current_holding = int(rows[-1][15]) if rows else 0
 title_main = "PULLUS - Egg Purchase vs Sales Monthly Summary"
 title_separator = "  |  "
 title_timestamp = f"Last Updated: {now_wat}"
-title_text = title_main + title_separator + title_timestamp
+title_holding = f"Current Holding: {current_holding:,} eggs"
+title_text = title_main + title_separator + title_holding + title_separator + title_timestamp
 title_row = ["", ""] + [title_text] + [""] * (num_cols - 3)
 all_output.append(title_row)
 # Row 2: section headers (only first cell of each section)
@@ -546,8 +555,8 @@ section_row[0] = "Period"
 section_row[2] = "PURCHASE"
 section_row[7] = "SALES (All Staff)"
 section_row[12] = "P vs S"
-section_row[13] = "VICTOR \u2192 FEMI (Abuja)"
-section_row[18] = "EGG MOVEMENT TRACKER (Kaduna \u2192 Abuja)"
+section_row[16] = "VICTOR \u2192 FEMI (Abuja)"
+section_row[21] = "EGG MOVEMENT TRACKER (Kaduna \u2192 Abuja)"
 all_output.append(section_row)
 # Row 3: column headers
 all_output.append(COLUMN_HEADERS)
@@ -559,10 +568,26 @@ for r in rows:
         out_row.append(int(v) if v == int(v) else v)
     all_output.append(out_row)
 
-# Totals row -- sum columns C through Q (index 2-16)
+# Totals row -- sum most numeric columns, but special-case the P vs S section:
+# Eggs Carried In = period start (0); Eggs On Hand = latest month (current holding);
+# Surplus/Deficit = current holding - cumulative unaccounted (true cumulative net,
+# avoids double-counting carry-overs that were already consumed).
+EGGS_CARRIED_IN_COL = 12
+SURPLUS_DEFICIT_COL = 13
+UNACCOUNTED_COL = 14
+EGGS_ON_HAND_COL = 15
 totals_row = ["TOTAL", ""]
 for col_idx in range(2, num_cols):
-    totals_row.append(int(sum(r[col_idx] for r in rows)))
+    if col_idx == EGGS_CARRIED_IN_COL:
+        totals_row.append(0)  # period start, nothing carried into the first month
+    elif col_idx == EGGS_ON_HAND_COL:
+        totals_row.append(int(rows[-1][col_idx]) if rows else 0)  # current holding = latest month
+    elif col_idx == SURPLUS_DEFICIT_COL:
+        on_hand_end = int(rows[-1][EGGS_ON_HAND_COL]) if rows else 0
+        unaccounted_total = int(sum(r[UNACCOUNTED_COL] for r in rows))
+        totals_row.append(on_hand_end - unaccounted_total)
+    else:
+        totals_row.append(int(sum(r[col_idx] for r in rows)))
 all_output.append(totals_row)
 
 # Clear and write
@@ -645,7 +670,7 @@ requests.append({
     }
 })
 # Section header merges (row 2)
-section_merges = [(0, 2), (2, 7), (7, 12), (12, 13), (13, 18), (18, 24)]
+section_merges = [(0, 2), (2, 7), (7, 12), (12, 16), (16, 21), (21, 27)]
 for start, end in section_merges:
     requests.append({
         "mergeCells": {
@@ -662,8 +687,9 @@ requests.append({
         "fields": "userEnteredFormat",
     }
 })
-# Make the timestamp portion smaller and lighter within the title cell
-timestamp_start = len(title_main)  # where separator starts
+# Format runs: main title bold 14pt, Current Holding bold 11pt (prominent), timestamp italic gray 9pt
+holding_run_start = len(title_main)  # where "  |  Current Holding..." begins
+timestamp_run_start = holding_run_start + len(title_separator) + len(title_holding)  # where "  |  Last Updated..." begins
 requests.append({
     "updateCells": {
         "range": grid_range(0, 1, 2, 3),  # C1 only (merged title cell)
@@ -671,7 +697,8 @@ requests.append({
             "values": [{
                 "textFormatRuns": [
                     {"startIndex": 0, "format": {"fontFamily": "Lato", "fontSize": 14, "bold": True, "foregroundColor": rgb(WHITE)}},
-                    {"startIndex": timestamp_start, "format": {"fontFamily": "Lato", "fontSize": 9, "bold": False, "italic": True, "foregroundColor": rgb("#B0B0B0")}},
+                    {"startIndex": holding_run_start, "format": {"fontFamily": "Lato", "fontSize": 11, "bold": True, "foregroundColor": rgb(WHITE)}},
+                    {"startIndex": timestamp_run_start, "format": {"fontFamily": "Lato", "fontSize": 9, "bold": False, "italic": True, "foregroundColor": rgb("#B0B0B0")}},
                 ]
             }]
         }],
@@ -684,9 +711,9 @@ section_colors = [
     (0, 2, DARK_GRAY),
     (2, 7, DEEP_TEAL),
     (7, 12, STEEL_BLUE),
-    (12, 13, DARK_AMBER),
-    (13, 18, DEEP_PURPLE),
-    (18, 24, DARK_BROWN),
+    (12, 16, DARK_AMBER),
+    (16, 21, DEEP_PURPLE),
+    (21, 27, DARK_BROWN),
 ]
 for start, end, color in section_colors:
     requests.append({
@@ -702,9 +729,9 @@ col_header_colors = [
     (0, 2, LIGHT_GRAY, CHARCOAL),
     (2, 7, LIGHT_TEAL, CHARCOAL),
     (7, 12, LIGHT_BLUE, CHARCOAL),
-    (12, 13, LIGHT_AMBER, CHARCOAL),
-    (13, 18, LIGHT_PURPLE, CHARCOAL),
-    (18, 24, LIGHT_BROWN, CHARCOAL),
+    (12, 16, LIGHT_AMBER, CHARCOAL),
+    (16, 21, LIGHT_PURPLE, CHARCOAL),
+    (21, 27, LIGHT_BROWN, CHARCOAL),
 ]
 for start, end, bg, fg in col_header_colors:
     fmt = cell_format(bg, fg, bold=True, h_align="CENTER")
@@ -754,7 +781,7 @@ for i in range(len(rows)):
     })
 
     # Conditional color for variance columns (L=11, Q=16, V=21, W=22)
-    for var_col in [12, 17, 22, 23]:
+    for var_col in [13, 20, 25, 26]:
         val = rows[i][var_col]
         text_color = "#0A7A0A" if val >= 0 else "#CC0000"
         requests.append({
@@ -803,7 +830,7 @@ requests.append({
     }
 })
 # Variance color in totals row
-for var_col in [12, 17, 22, 23]:
+for var_col in [13, 20, 25, 26]:
     val = totals_row[var_col]
     text_color = "#0A7A0A" if val >= 0 else "#CC0000"
     requests.append({
@@ -845,7 +872,7 @@ requests.append({
 
 # Thicker borders between sections
 thick_border = {"style": "SOLID_MEDIUM", "color": rgb(CHARCOAL)}
-section_boundaries = [0, 2, 7, 12, 13, 18]
+section_boundaries = [0, 2, 7, 12, 16, 21]
 for col in section_boundaries:
     requests.append({
         "updateBorders": {
@@ -888,18 +915,21 @@ col_widths = [
     65,  # J: Cracked Eggs Sold
     75,  # K: Total Eggs Sold
     65,  # L: Samples
-    75,  # M: Surplus / Deficit
-    75,  # N: Victor Eggs Sent
-    75,  # O: Femi Good Eggs
-    65,  # P: Femi Broken
-    65,  # Q: Femi Cracked
-    80,  # R: Transfer Variance
-    75,  # S: Tracker Shipped
-    75,  # T: Tracker Delivered
-    65,  # U: Transit Broken
-    65,  # V: Transit Cracked
-    80,  # W: Victor vs Tracker
-    80,  # X: Tracker vs Femi
+    70,  # M: Prior Surplus
+    75,  # N: Surplus / Deficit
+    75,  # O: Unaccounted
+    75,  # P: Carried Forward
+    75,  # Q: Victor Eggs Sent
+    75,  # R: Femi Good Eggs
+    65,  # S: Femi Broken
+    65,  # T: Femi Cracked
+    80,  # U: Transfer Variance
+    75,  # V: Tracker Shipped
+    75,  # W: Tracker Delivered
+    65,  # X: Transit Broken
+    65,  # Y: Transit Cracked
+    80,  # Z: Victor vs Tracker
+    80,  # AA: Tracker vs Femi
 ]
 for i, width in enumerate(col_widths):
     requests.append({
@@ -979,10 +1009,13 @@ logic_content = [
     ["", "Total Eggs Sold", "Good + Cracked only. Broken eggs are excluded because they are losses"],
     ["", "Samples", "Eggs given out as samples (Status = 'sample' in the sales sheet). Not counted as sales but still reduce inventory"],
     ["", "", ""],
-    ["P vs S", "", ""],
-    ["", "Surplus / Deficit", "Eggs Available for Sale minus Total Eggs Sold minus Broken Eggs (Loss) minus Samples"],
-    ["", "", "Positive = stock remaining or sales not yet recorded"],
-    ["", "", "Negative = sold more than purchased that month (using prior stock)"],
+    ["P vs S", "", "Monthly reconciliation. Surpluses roll forward, deficits are bucketed as unaccounted so a bad month doesn't pollute the next."],
+    ["", "Eggs Carried In", "Eggs we had at the start of the month (= prior month's Eggs On Hand). Always 0 or positive."],
+    ["", "Surplus / Deficit", "(Total Eggs Purchased + Eggs Carried In) minus Total Eggs Sold minus Broken Eggs (Loss) minus Samples"],
+    ["", "", "Positive = real leftover stock at month end — rolls into next month's Eggs Carried In"],
+    ["", "", "Negative = sold/lost more than we had — bucketed in Unaccounted, does NOT carry forward"],
+    ["", "Unaccounted", "Eggs we couldn't reconcile (= abs(Surplus/Deficit) when negative). Likely data capture errors or actual missing eggs."],
+    ["", "Eggs On Hand", "Eggs left in inventory at end of month (= Surplus/Deficit when positive, else 0). The LATEST month's value is our CURRENT HOLDING."],
     ["", "", ""],
     ["VICTOR to FEMI (Abuja)", "", "Egg transfer from Victor in Kaduna to Femi in Abuja"],
     ["", "Victor Eggs Sent", "What Victor logged as sent to Abuja"],
@@ -1046,9 +1079,9 @@ section_rows_colors = [
     (4, DEEP_TEAL),    # PURCHASE
     (11, STEEL_BLUE),  # SALES
     (20, DARK_AMBER),  # P vs S
-    (25, DEEP_PURPLE), # VICTOR to FEMI
-    (34, DARK_BROWN),  # TRACKER
-    (42, DARK_GRAY),   # NOTES
+    (28, DEEP_PURPLE), # VICTOR to FEMI
+    (37, DARK_BROWN),  # TRACKER
+    (45, DARK_GRAY),   # NOTES
 ]
 for row_idx, color in section_rows_colors:
     logic_requests.append({
