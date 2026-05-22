@@ -127,7 +127,8 @@ def fetch_data_state():
             content = base64.b64decode(result.stdout.strip()).decode()
             return json.loads(content)
     except Exception as e:
-        print(f"  Could not fetch data state: {e}")
+        # Only log the exception type to avoid leaking any auth/URL details in public workflow logs
+        print(f"  Could not fetch data state: {type(e).__name__}")
     return None
 
 
@@ -212,8 +213,9 @@ femi_abuja = defaultdict(lambda: {"eggs": 0, "cracked": 0, "broken": 0})
 staff_with_egg_sales = set()
 
 all_sales_raw = {}
-for staff_name, sheet_id in SALES_STAFF.items():
-    print(f"  Reading {staff_name}...")
+# Iterate with an index so staff names don't leak into public workflow logs.
+for staff_idx, (staff_name, sheet_id) in enumerate(SALES_STAFF.items(), 1):
+    print(f"  Reading sales sheet {staff_idx}/{len(SALES_STAFF)}...")
     book = gc.open_by_key(sheet_id)
     ws = book.worksheet(SALES_WORKSHEET)
     all_vals = ws.get_all_values()
@@ -230,7 +232,7 @@ for staff_name, sheet_id in SALES_STAFF.items():
             break
 
     if header_row_idx is None:
-        print(f"    WARNING: Could not find headers for {staff_name}, skipping")
+        print(f"    WARNING: Could not find headers in sales sheet {staff_idx}, skipping")
         continue
 
     date_col = find_col(headers, "Date")
@@ -1659,10 +1661,12 @@ if breakage_alerts and GOOGLE_SPACE_WEBHOOK_URL:
     if IS_CI and previous_state:
         alerted_set = set(previous_state.get("alerted_shipments", []))
 
-    # Build unique keys and filter out already-alerted shipments
+    # Build unique keys (hashed so customer names never get committed to the public data-state branch)
+    # and filter out already-alerted shipments
     new_alerts = []
     for alert in breakage_alerts:
-        key = f"{alert['tab']}|{alert['date']}|{alert['customer']}|{alert['shipped']}"
+        raw_key = f"{alert['tab']}|{alert['date']}|{alert['customer']}|{alert['shipped']}"
+        key = hashlib.sha256(raw_key.encode()).hexdigest()[:16]
         if key not in alerted_set:
             new_alerts.append((key, alert))
 
