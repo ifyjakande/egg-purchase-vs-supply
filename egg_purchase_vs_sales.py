@@ -537,13 +537,66 @@ COLUMN_HEADERS = [
     "Transit Cracked", "Victor Sent vs Tracker Shipped", "Tracker Delivered vs Femi Sold",
 ]
 
+# Name -> index lookup. All downstream code references columns by name, so
+# reordering COLUMN_HEADERS automatically reorders everything else.
+COL = {name: i for i, name in enumerate(COLUMN_HEADERS)}
+
+# Sections in display order. Each maps a section label to its first column's name.
+# Section end is inferred from the next section's start (or end of headers).
+SECTIONS_DEF = [
+    ("Period", "Month"),
+    ("PURCHASE", "Crates Purchased"),
+    ("SALES (All Staff)", "Good Eggs Sold"),
+    ("P vs S", "Eggs Carried In"),
+    ("VICTOR → FEMI (Abuja)", "Victor Eggs Sent (Abuja)"),
+    ("EGG MOVEMENT TRACKER (Kaduna → Abuja)", "Tracker Shipped"),
+]
+
+# Columns whose values get red/green bold treatment based on sign.
+VARIANCE_COLS = [
+    "Surplus / Deficit",
+    "Transfer Variance (Sent - Received)",
+    "Victor Sent vs Tracker Shipped",
+    "Tracker Delivered vs Femi Sold",
+]
+
+# Column widths keyed by header name (pixels).
+COL_WIDTHS = {
+    "Month": 70, "Year": 45,
+    "Crates Purchased": 70, "Total Eggs Purchased": 75, "Broken Eggs (Purchase)": 65,
+    "Cracked Eggs (Purchase)": 65, "Eggs Available for Sale": 75,
+    "Good Eggs Sold": 75, "Broken Eggs (Loss)": 65, "Cracked Eggs Sold": 65,
+    "Total Eggs Sold": 75, "Samples": 65,
+    "Eggs Carried In": 70, "Surplus / Deficit": 75, "Unaccounted": 75, "Eggs On Hand": 75,
+    "Victor Eggs Sent (Abuja)": 75, "Femi Good Eggs (Abuja)": 75,
+    "Femi Broken (Abuja)": 65, "Femi Cracked (Abuja)": 65,
+    "Transfer Variance (Sent - Received)": 80,
+    "Tracker Shipped": 75, "Tracker Delivered": 75, "Transit Broken": 65,
+    "Transit Cracked": 65, "Victor Sent vs Tracker Shipped": 80,
+    "Tracker Delivered vs Femi Sold": 80,
+}
+
+
+def compute_section_ranges(headers):
+    """Returns ordered list of (label, start_col, end_col) for sections present in `headers`."""
+    starts = []
+    for label, first_col in SECTIONS_DEF:
+        if first_col in headers:
+            starts.append((label, headers.index(first_col)))
+    starts.sort(key=lambda x: x[1])
+    result = []
+    for i, (label, start) in enumerate(starts):
+        end = starts[i + 1][1] if i + 1 < len(starts) else len(headers)
+        result.append((label, start, end))
+    return result
+
+
 num_cols = len(COLUMN_HEADERS)
 
 # Prepare all cell values
 all_output = []
 # Row 1: title in C1 with embedded timestamp and current holding
-# Current holding = "Eggs On Hand" of the latest month row (column index 15)
-current_holding = int(rows[-1][15]) if rows else 0
+current_holding = int(rows[-1][COL["Eggs On Hand"]]) if rows else 0
 title_main = "PULLUS - Egg Purchase vs Sales Monthly Summary"
 title_separator = "  |  "
 title_timestamp = f"Last Updated: {now_wat}"
@@ -552,13 +605,10 @@ title_text = title_main + title_separator + title_holding + title_separator + ti
 title_row = ["", ""] + [title_text] + [""] * (num_cols - 3)
 all_output.append(title_row)
 # Row 2: section headers (only first cell of each section)
+section_ranges_main = compute_section_ranges(COLUMN_HEADERS)
 section_row = [""] * num_cols
-section_row[0] = "Period"
-section_row[2] = "PURCHASE"
-section_row[7] = "SALES (All Staff)"
-section_row[12] = "P vs S"
-section_row[16] = "VICTOR \u2192 FEMI (Abuja)"
-section_row[21] = "EGG MOVEMENT TRACKER (Kaduna \u2192 Abuja)"
+for label, start, _end in section_ranges_main:
+    section_row[start] = label
 all_output.append(section_row)
 # Row 3: column headers
 all_output.append(COLUMN_HEADERS)
@@ -574,19 +624,15 @@ for r in rows:
 # Eggs Carried In = period start (0); Eggs On Hand = latest month (current holding);
 # Surplus/Deficit = current holding - cumulative unaccounted (true cumulative net,
 # avoids double-counting carry-overs that were already consumed).
-EGGS_CARRIED_IN_COL = 12
-SURPLUS_DEFICIT_COL = 13
-UNACCOUNTED_COL = 14
-EGGS_ON_HAND_COL = 15
 totals_row = ["TOTAL", ""]
 for col_idx in range(2, num_cols):
-    if col_idx == EGGS_CARRIED_IN_COL:
+    if col_idx == COL["Eggs Carried In"]:
         totals_row.append(0)  # period start, nothing carried into the first month
-    elif col_idx == EGGS_ON_HAND_COL:
+    elif col_idx == COL["Eggs On Hand"]:
         totals_row.append(int(rows[-1][col_idx]) if rows else 0)  # current holding = latest month
-    elif col_idx == SURPLUS_DEFICIT_COL:
-        on_hand_end = int(rows[-1][EGGS_ON_HAND_COL]) if rows else 0
-        unaccounted_total = int(sum(r[UNACCOUNTED_COL] for r in rows))
+    elif col_idx == COL["Surplus / Deficit"]:
+        on_hand_end = int(rows[-1][COL["Eggs On Hand"]]) if rows else 0
+        unaccounted_total = int(sum(r[COL["Unaccounted"]] for r in rows))
         totals_row.append(on_hand_end - unaccounted_total)
     else:
         totals_row.append(int(sum(r[col_idx] for r in rows)))
@@ -659,6 +705,16 @@ LIGHT_BROWN = "#EFEBE9"
 ROW_WHITE = "#FFFFFF"
 ROW_ALT = "#F8F9FA"
 
+# Section label -> (dark bg color, light bg color). Used for header row + column header row formatting.
+SECTION_COLORS = {
+    "Period": (DARK_GRAY, LIGHT_GRAY),
+    "PURCHASE": (DEEP_TEAL, LIGHT_TEAL),
+    "SALES (All Staff)": (STEEL_BLUE, LIGHT_BLUE),
+    "P vs S": (DARK_AMBER, LIGHT_AMBER),
+    "VICTOR → FEMI (Abuja)": (DEEP_PURPLE, LIGHT_PURPLE),
+    "EGG MOVEMENT TRACKER (Kaduna → Abuja)": (DARK_BROWN, LIGHT_BROWN),
+}
+
 total_rows = len(all_output)
 
 requests = []
@@ -671,8 +727,8 @@ requests.append({
         "mergeType": "MERGE_ALL",
     }
 })
-# Section header merges (row 2)
-section_merges = [(0, 2), (2, 7), (7, 12), (12, 16), (16, 21), (21, 27)]
+# Section header merges (row 2) -- derived from section ranges
+section_merges = [(start, end) for _label, start, end in section_ranges_main]
 for start, end in section_merges:
     requests.append({
         "mergeCells": {
@@ -709,14 +765,7 @@ requests.append({
 })
 
 # --- Section header row format (row 2) ---
-section_colors = [
-    (0, 2, DARK_GRAY),
-    (2, 7, DEEP_TEAL),
-    (7, 12, STEEL_BLUE),
-    (12, 16, DARK_AMBER),
-    (16, 21, DEEP_PURPLE),
-    (21, 27, DARK_BROWN),
-]
+section_colors = [(start, end, SECTION_COLORS[label][0]) for label, start, end in section_ranges_main]
 for start, end, color in section_colors:
     requests.append({
         "repeatCell": {
@@ -727,14 +776,7 @@ for start, end, color in section_colors:
     })
 
 # --- Column header row format (row 3) ---
-col_header_colors = [
-    (0, 2, LIGHT_GRAY, CHARCOAL),
-    (2, 7, LIGHT_TEAL, CHARCOAL),
-    (7, 12, LIGHT_BLUE, CHARCOAL),
-    (12, 16, LIGHT_AMBER, CHARCOAL),
-    (16, 21, LIGHT_PURPLE, CHARCOAL),
-    (21, 27, LIGHT_BROWN, CHARCOAL),
-]
+col_header_colors = [(start, end, SECTION_COLORS[label][1], CHARCOAL) for label, start, end in section_ranges_main]
 for start, end, bg, fg in col_header_colors:
     fmt = cell_format(bg, fg, bold=True, h_align="CENTER")
     fmt["wrapStrategy"] = "WRAP"
@@ -783,7 +825,7 @@ for i in range(len(rows)):
     })
 
     # Conditional color for variance columns (L=11, Q=16, V=21, W=22)
-    for var_col in [13, 20, 25, 26]:
+    for var_col in [COL[n] for n in VARIANCE_COLS]:
         val = rows[i][var_col]
         text_color = "#0A7A0A" if val >= 0 else "#CC0000"
         requests.append({
@@ -832,7 +874,7 @@ requests.append({
     }
 })
 # Variance color in totals row
-for var_col in [13, 20, 25, 26]:
+for var_col in [COL[n] for n in VARIANCE_COLS]:
     val = totals_row[var_col]
     text_color = "#0A7A0A" if val >= 0 else "#CC0000"
     requests.append({
@@ -874,7 +916,7 @@ requests.append({
 
 # Thicker borders between sections
 thick_border = {"style": "SOLID_MEDIUM", "color": rgb(CHARCOAL)}
-section_boundaries = [0, 2, 7, 12, 16, 21]
+section_boundaries = [start for _label, start, _end in section_ranges_main]
 for col in section_boundaries:
     requests.append({
         "updateBorders": {
@@ -904,35 +946,7 @@ requests.append({
 })
 
 # --- Set tight column widths (pixels) ---
-col_widths = [
-    70,  # A: Month
-    45,  # B: Year
-    70,  # C: Crates Purchased
-    75,  # D: Total Eggs Purchased
-    65,  # E: Broken Eggs (Purchase)
-    65,  # F: Cracked Eggs (Purchase)
-    75,  # G: Eggs Available for Sale
-    75,  # H: Good Eggs Sold
-    65,  # I: Broken Eggs Sold
-    65,  # J: Cracked Eggs Sold
-    75,  # K: Total Eggs Sold
-    65,  # L: Samples
-    70,  # M: Prior Surplus
-    75,  # N: Surplus / Deficit
-    75,  # O: Unaccounted
-    75,  # P: Carried Forward
-    75,  # Q: Victor Eggs Sent
-    75,  # R: Femi Good Eggs
-    65,  # S: Femi Broken
-    65,  # T: Femi Cracked
-    80,  # U: Transfer Variance
-    75,  # V: Tracker Shipped
-    75,  # W: Tracker Delivered
-    65,  # X: Transit Broken
-    65,  # Y: Transit Cracked
-    80,  # Z: Victor vs Tracker
-    80,  # AA: Tracker vs Femi
-]
+col_widths = [COL_WIDTHS[name] for name in COLUMN_HEADERS]
 for i, width in enumerate(col_widths):
     requests.append({
         "updateDimensionProperties": {
@@ -1300,6 +1314,315 @@ guide_requests.append({
 target_book.batch_update({"requests": guide_requests})
 
 print("Done! Quick Guide sheet created.")
+
+
+# --- Management Dashboard (subset to secondary book) ---
+MGMT_TARGET = PIPELINE_CONFIG.get("management_target_spreadsheet_id")
+if MGMT_TARGET and rows:
+    print("\nWriting Management Dashboard subset...")
+
+    # Trim to Period + PURCHASE + SALES + P vs S (everything before VICTOR section).
+    MGMT_END_COL = COL["Victor Eggs Sent (Abuja)"]  # first col we want to exclude
+    mgmt_headers = COLUMN_HEADERS[:MGMT_END_COL]
+    mgmt_num_cols = len(mgmt_headers)
+    mgmt_section_ranges = compute_section_ranges(mgmt_headers)
+
+    mgmt_book = gc.open_by_key(MGMT_TARGET)
+    try:
+        mgmt_ws = mgmt_book.worksheet("Egg Purchase vs Sales")
+    except gspread.exceptions.WorksheetNotFound:
+        mgmt_ws = mgmt_book.add_worksheet("Egg Purchase vs Sales", rows=50, cols=mgmt_num_cols)
+    mgmt_id = mgmt_ws.id
+
+    # Unmerge any existing merged cells
+    mgmt_book.batch_update({"requests": [{
+        "unmergeCells": {
+            "range": {
+                "sheetId": mgmt_id,
+                "startRowIndex": 0,
+                "endRowIndex": mgmt_ws.row_count,
+                "startColumnIndex": 0,
+                "endColumnIndex": mgmt_ws.col_count,
+            }
+        }
+    }]})
+
+    # Build output
+    mgmt_output = []
+    mgmt_title_row = ["", ""] + [title_text] + [""] * (mgmt_num_cols - 3)
+    mgmt_output.append(mgmt_title_row)
+    mgmt_section_row = [""] * mgmt_num_cols
+    for label, start, _end in mgmt_section_ranges:
+        mgmt_section_row[start] = label
+    mgmt_output.append(mgmt_section_row)
+    mgmt_output.append(mgmt_headers)
+    for r in rows:
+        out_row = [r[0], int(r[1])]
+        for v in r[2:MGMT_END_COL]:
+            out_row.append(int(v) if v == int(v) else v)
+        mgmt_output.append(out_row)
+    # Totals row with same special-cases
+    mgmt_totals_row = ["TOTAL", ""]
+    for col_idx in range(2, mgmt_num_cols):
+        if col_idx == COL["Eggs Carried In"]:
+            mgmt_totals_row.append(0)
+        elif col_idx == COL["Eggs On Hand"]:
+            mgmt_totals_row.append(int(rows[-1][col_idx]))
+        elif col_idx == COL["Surplus / Deficit"]:
+            on_hand_end = int(rows[-1][COL["Eggs On Hand"]])
+            unaccounted_total = int(sum(r[COL["Unaccounted"]] for r in rows))
+            mgmt_totals_row.append(on_hand_end - unaccounted_total)
+        else:
+            mgmt_totals_row.append(int(sum(r[col_idx] for r in rows)))
+    mgmt_output.append(mgmt_totals_row)
+
+    mgmt_ws.clear()
+    mgmt_ws.update(mgmt_output, "A1")
+
+    mgmt_total_rows = len(mgmt_output)
+    mgmt_totals_row_idx = mgmt_total_rows - 1
+
+    def mgmt_grid(start_row, end_row, start_col, end_col):
+        return {
+            "sheetId": mgmt_id,
+            "startRowIndex": start_row,
+            "endRowIndex": end_row,
+            "startColumnIndex": start_col,
+            "endColumnIndex": end_col,
+        }
+
+    mgmt_requests = []
+
+    # Merges
+    mgmt_requests.append({
+        "mergeCells": {"range": mgmt_grid(0, 1, 2, mgmt_num_cols), "mergeType": "MERGE_ALL"}
+    })
+    for _label, start, end in mgmt_section_ranges:
+        mgmt_requests.append({
+            "mergeCells": {"range": mgmt_grid(1, 2, start, end), "mergeType": "MERGE_ALL"}
+        })
+
+    # Title row format
+    mgmt_requests.append({
+        "repeatCell": {
+            "range": mgmt_grid(0, 1, 0, mgmt_num_cols),
+            "cell": {"userEnteredFormat": cell_format(DARK_NAVY, WHITE, bold=True, font_size=14, h_align="CENTER")},
+            "fields": "userEnteredFormat",
+        }
+    })
+    # Title text runs (reuse holding_run_start/timestamp_run_start computed for main)
+    mgmt_requests.append({
+        "updateCells": {
+            "range": mgmt_grid(0, 1, 2, 3),
+            "rows": [{
+                "values": [{
+                    "textFormatRuns": [
+                        {"startIndex": 0, "format": {"fontFamily": "Lato", "fontSize": 14, "bold": True, "foregroundColor": rgb(WHITE)}},
+                        {"startIndex": holding_run_start, "format": {"fontFamily": "Lato", "fontSize": 11, "bold": True, "foregroundColor": rgb(WHITE)}},
+                        {"startIndex": timestamp_run_start, "format": {"fontFamily": "Lato", "fontSize": 9, "bold": False, "italic": True, "foregroundColor": rgb("#B0B0B0")}},
+                    ]
+                }]
+            }],
+            "fields": "textFormatRuns",
+        }
+    })
+
+    # Section header row
+    for label, start, end in mgmt_section_ranges:
+        mgmt_requests.append({
+            "repeatCell": {
+                "range": mgmt_grid(1, 2, start, end),
+                "cell": {"userEnteredFormat": cell_format(SECTION_COLORS[label][0], WHITE, bold=True, font_size=11, h_align="CENTER")},
+                "fields": "userEnteredFormat",
+            }
+        })
+
+    # Column header row
+    for label, start, end in mgmt_section_ranges:
+        fmt = cell_format(SECTION_COLORS[label][1], CHARCOAL, bold=True, h_align="CENTER")
+        fmt["wrapStrategy"] = "WRAP"
+        mgmt_requests.append({
+            "repeatCell": {
+                "range": mgmt_grid(2, 3, start, end),
+                "cell": {"userEnteredFormat": fmt},
+                "fields": "userEnteredFormat",
+            }
+        })
+
+    # Data row formatting
+    for i in range(len(rows)):
+        row_idx = 3 + i
+        bg = ROW_WHITE if i % 2 == 0 else ROW_ALT
+        mgmt_requests.append({
+            "repeatCell": {
+                "range": mgmt_grid(row_idx, row_idx + 1, 0, mgmt_num_cols),
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": rgb(bg),
+                        "horizontalAlignment": "CENTER",
+                        "textFormat": {"bold": False, "foregroundColor": rgb(CHARCOAL)},
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,textFormat)",
+            }
+        })
+        mgmt_requests.append({
+            "repeatCell": {
+                "range": mgmt_grid(row_idx, row_idx + 1, 2, mgmt_num_cols),
+                "cell": {
+                    "userEnteredFormat": {
+                        "numberFormat": {"type": "NUMBER", "pattern": "#,##0"},
+                        "backgroundColor": rgb(bg),
+                        "horizontalAlignment": "CENTER",
+                    }
+                },
+                "fields": "userEnteredFormat(numberFormat,backgroundColor,horizontalAlignment)",
+            }
+        })
+        # Variance coloring on any variance column that falls inside the subset
+        for vc_name in VARIANCE_COLS:
+            vc_idx = COL[vc_name]
+            if vc_idx >= mgmt_num_cols:
+                continue
+            val = rows[i][vc_idx]
+            text_color = "#0A7A0A" if val >= 0 else "#CC0000"
+            mgmt_requests.append({
+                "repeatCell": {
+                    "range": mgmt_grid(row_idx, row_idx + 1, vc_idx, vc_idx + 1),
+                    "cell": {
+                        "userEnteredFormat": {
+                            "textFormat": {"foregroundColor": rgb(text_color), "bold": True},
+                            "numberFormat": {"type": "NUMBER", "pattern": "#,##0"},
+                            "backgroundColor": rgb(bg),
+                            "horizontalAlignment": "CENTER",
+                        }
+                    },
+                    "fields": "userEnteredFormat",
+                }
+            })
+
+    # Totals row formatting
+    mgmt_requests.append({
+        "repeatCell": {
+            "range": mgmt_grid(mgmt_totals_row_idx, mgmt_totals_row_idx + 1, 0, mgmt_num_cols),
+            "cell": {
+                "userEnteredFormat": {
+                    "backgroundColor": rgb(LIGHT_GRAY),
+                    "textFormat": {"bold": True, "foregroundColor": rgb(DARK_NAVY)},
+                    "horizontalAlignment": "CENTER",
+                }
+            },
+            "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
+        }
+    })
+    mgmt_requests.append({
+        "repeatCell": {
+            "range": mgmt_grid(mgmt_totals_row_idx, mgmt_totals_row_idx + 1, 2, mgmt_num_cols),
+            "cell": {
+                "userEnteredFormat": {
+                    "numberFormat": {"type": "NUMBER", "pattern": "#,##0"},
+                    "backgroundColor": rgb(LIGHT_GRAY),
+                    "textFormat": {"bold": True, "foregroundColor": rgb(DARK_NAVY)},
+                    "horizontalAlignment": "CENTER",
+                }
+            },
+            "fields": "userEnteredFormat",
+        }
+    })
+    for vc_name in VARIANCE_COLS:
+        vc_idx = COL[vc_name]
+        if vc_idx >= mgmt_num_cols:
+            continue
+        val = mgmt_totals_row[vc_idx]
+        text_color = "#0A7A0A" if val >= 0 else "#CC0000"
+        mgmt_requests.append({
+            "repeatCell": {
+                "range": mgmt_grid(mgmt_totals_row_idx, mgmt_totals_row_idx + 1, vc_idx, vc_idx + 1),
+                "cell": {
+                    "userEnteredFormat": {
+                        "textFormat": {"foregroundColor": rgb(text_color), "bold": True},
+                        "numberFormat": {"type": "NUMBER", "pattern": "#,##0"},
+                        "backgroundColor": rgb(LIGHT_GRAY),
+                        "horizontalAlignment": "CENTER",
+                    }
+                },
+                "fields": "userEnteredFormat",
+            }
+        })
+    mgmt_requests.append({
+        "updateBorders": {
+            "range": mgmt_grid(mgmt_totals_row_idx, mgmt_totals_row_idx + 1, 0, mgmt_num_cols),
+            "top": {"style": "SOLID_MEDIUM", "color": rgb(CHARCOAL)},
+        }
+    })
+
+    # Borders
+    thin = {"style": "SOLID", "color": rgb("#D0D0D0")}
+    mgmt_requests.append({
+        "updateBorders": {
+            "range": mgmt_grid(0, mgmt_total_rows, 0, mgmt_num_cols),
+            "top": thin, "bottom": thin, "left": thin, "right": thin,
+            "innerHorizontal": thin, "innerVertical": thin,
+        }
+    })
+    thick = {"style": "SOLID_MEDIUM", "color": rgb(CHARCOAL)}
+    for c in [start for _label, start, _end in mgmt_section_ranges]:
+        mgmt_requests.append({
+            "updateBorders": {
+                "range": mgmt_grid(0, mgmt_total_rows, c, min(c + 1, mgmt_num_cols)),
+                "left": thick,
+            }
+        })
+    mgmt_requests.append({
+        "updateBorders": {
+            "range": mgmt_grid(0, mgmt_total_rows, mgmt_num_cols - 1, mgmt_num_cols),
+            "right": thick,
+        }
+    })
+    mgmt_requests.append({
+        "updateBorders": {"range": mgmt_grid(0, 1, 0, mgmt_num_cols), "top": thick}
+    })
+    mgmt_requests.append({
+        "updateBorders": {"range": mgmt_grid(mgmt_totals_row_idx, mgmt_totals_row_idx + 1, 0, mgmt_num_cols), "bottom": thick}
+    })
+
+    # Column widths (looked up by name)
+    for i, name in enumerate(mgmt_headers):
+        mgmt_requests.append({
+            "updateDimensionProperties": {
+                "range": {"sheetId": mgmt_id, "dimension": "COLUMNS", "startIndex": i, "endIndex": i + 1},
+                "properties": {"pixelSize": COL_WIDTHS[name]},
+                "fields": "pixelSize",
+            }
+        })
+
+    # Freeze rows + first 2 cols, trim grid
+    mgmt_requests.append({
+        "updateSheetProperties": {
+            "properties": {
+                "sheetId": mgmt_id,
+                "gridProperties": {
+                    "frozenRowCount": 3,
+                    "frozenColumnCount": 2,
+                    "rowCount": mgmt_total_rows,
+                    "columnCount": mgmt_num_cols,
+                },
+            },
+            "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount,gridProperties.rowCount,gridProperties.columnCount",
+        }
+    })
+
+    # Apply Lato across the management sheet (last so it wins over broader masks)
+    mgmt_requests.append({
+        "repeatCell": {
+            "range": mgmt_grid(0, mgmt_total_rows, 0, mgmt_num_cols),
+            "cell": {"userEnteredFormat": {"textFormat": {"fontFamily": "Lato"}}},
+            "fields": "userEnteredFormat.textFormat.fontFamily",
+        }
+    })
+
+    mgmt_book.batch_update({"requests": mgmt_requests})
+    print("Done! Management Dashboard written to secondary book.")
 
 
 # --- Send Breakage Alerts to Google Space ---
