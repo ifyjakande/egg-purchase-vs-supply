@@ -23,10 +23,7 @@ jobs:
       - run: python egg_purchase_vs_sales.py
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          TARGET_SPREADSHEET_ID: ${{ secrets.TARGET_SPREADSHEET_ID }}
-          PURCHASE_SHEET_ID: ${{ secrets.PURCHASE_SHEET_ID }}
-          TRACKER_SHEET_ID: ${{ secrets.TRACKER_SHEET_ID }}
-          SALES_STAFF_JSON: ${{ secrets.SALES_STAFF_JSON }}
+          PIPELINE_CONFIG_JSON: ${{ secrets.PIPELINE_CONFIG_JSON }}
           GOOGLE_SPACE_WEBHOOK_URL: ${{ secrets.GOOGLE_SPACE_WEBHOOK_URL }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

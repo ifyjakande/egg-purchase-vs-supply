@@ -10,11 +10,13 @@ import subprocess
 import urllib.request
 
 # --- Config from environment variables ---
+# Sheet IDs and staff mapping come from a single PIPELINE_CONFIG_JSON secret that mirrors local_config.json.
 GOOGLE_SERVICE_ACCOUNT_JSON = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-TARGET_SPREADSHEET_ID = os.environ["TARGET_SPREADSHEET_ID"]
-PURCHASE_SHEET_ID = os.environ["PURCHASE_SHEET_ID"]
-TRACKER_SHEET_ID = os.environ["TRACKER_SHEET_ID"]
-SALES_STAFF = json.loads(os.environ["SALES_STAFF_JSON"])
+PIPELINE_CONFIG = json.loads(os.environ["PIPELINE_CONFIG_JSON"])
+TARGET_SPREADSHEET_ID = PIPELINE_CONFIG["target_spreadsheet_id"]
+PURCHASE_SHEET_ID = PIPELINE_CONFIG["purchase_sheet_id"]
+TRACKER_SHEET_ID = PIPELINE_CONFIG["tracker_sheet_id"]
+SALES_STAFF = PIPELINE_CONFIG["sales_staff"]
 
 GOOGLE_SPACE_WEBHOOK_URL = os.environ.get("GOOGLE_SPACE_WEBHOOK_URL")
 
@@ -995,16 +997,16 @@ logic_content = [
     ["", "", ""],
     ["PURCHASE", "", "Eggs bought from suppliers in Kaduna"],
     ["", "Crates Purchased", "Total crates bought that month"],
-    ["", "Total Eggs Purchased", "Crates x 30"],
-    ["", "Broken Eggs (Purchase)", "Broken on arrival from supplier - cannot be sold"],
-    ["", "Cracked Eggs (Purchase)", "Cracked on arrival - still sold at a lower price"],
-    ["", "Eggs Available for Sale", "Total Eggs minus Broken only. Cracked eggs are still sellable"],
+    ["", "Total Eggs Purchased", "Crates × Eggs per Crate (defaults to 30 when not set in the source sheet)"],
+    ["", "Broken Eggs (Purchase)", "Broken on arrival from supplier — cannot be sold. Note: these same eggs are also captured in Broken Eggs (Loss) on the sales side, so reconciliation uses Total Eggs Purchased (not Available)."],
+    ["", "Cracked Eggs (Purchase)", "Cracked on arrival — still sold at a lower price"],
+    ["", "Eggs Available for Sale", "Total Eggs minus Broken (Purchase). Informational; the P vs S reconciliation uses Total Eggs Purchased."],
     ["", "", ""],
     ["SALES (All Staff)", "", "Actual egg sales to end customers"],
     ["", "", "Victor's Abuja entries are excluded here to avoid double counting."],
     ["", "", "Victor transfers eggs to Femi in Abuja. Femi sells them to customers. If we count both, those eggs are counted twice. So for Abuja, we only use Femi's records. Victor's other sales (e.g. Kano) are included."],
     ["", "Good Eggs Sold", "Whole eggs sold to customers"],
-    ["", "Broken Eggs (Loss)", "Broken eggs recorded in sales sheets - these are losses, not sales"],
+    ["", "Broken Eggs (Loss)", "Broken eggs recorded in sales sheets — losses, not sales. Includes arrival breakage (same eggs as Broken (Purchase))."],
     ["", "Cracked Eggs Sold", "Cracked eggs sold at a lower price"],
     ["", "Total Eggs Sold", "Good + Cracked only. Broken eggs are excluded because they are losses"],
     ["", "Samples", "Eggs given out as samples (Status = 'sample' in the sales sheet). Not counted as sales but still reduce inventory"],
@@ -1018,7 +1020,7 @@ logic_content = [
     ["", "Eggs On Hand", "Eggs left in inventory at end of month (= Surplus/Deficit when positive, else 0). The LATEST month's value is our CURRENT HOLDING."],
     ["", "", ""],
     ["VICTOR to FEMI (Abuja)", "", "Egg transfer from Victor in Kaduna to Femi in Abuja"],
-    ["", "Victor Eggs Sent", "What Victor logged as sent to Abuja"],
+    ["", "Victor Eggs Sent", "Whole eggs Victor logged as sent to Abuja (only the 'eggs' product type — cracked/broken Abuja entries from Victor are not tracked here)"],
     ["", "Femi Good Eggs", "Good eggs Femi sold in Abuja"],
     ["", "Femi Broken", "Broken eggs Femi sold in Abuja"],
     ["", "Femi Cracked", "Cracked eggs Femi sold in Abuja"],
@@ -1026,7 +1028,7 @@ logic_content = [
     ["", "", "Positive = Femi hasn't sold or recorded everything Victor sent"],
     ["", "", "Negative = Femi sold more than Victor sent that month (using prior stock)"],
     ["", "", ""],
-    ["EGG MOVEMENT TRACKER", "", "Femi's separate sheet tracking physical shipments from Kaduna to Abuja"],
+    ["EGG MOVEMENT TRACKER", "", "Separate tracker sheet recording physical shipments from Kaduna to Abuja"],
     ["", "Tracker Shipped", "Eggs loaded and sent from Kaduna"],
     ["", "Tracker Delivered", "Eggs that arrived intact (Shipped minus breakage)"],
     ["", "Transit Broken", "Eggs broken during transport"],
@@ -1035,9 +1037,9 @@ logic_content = [
     ["", "Tracker Delivered vs Femi Sold", "Tracker delivered minus Femi's total sales - should ideally be zero"],
     ["", "", ""],
     ["NOTES", "", ""],
-    ["", "1", "All data is 2026 only"],
+    ["", "1", "Tracker data is filtered to 2026 onwards. Purchase and sales sheets are read as-is — make sure source sheets only contain current data."],
     ["", "2", f"Staff with egg sales currently: {', '.join(sorted(staff_with_egg_sales))}"],
-    ["", "3", "Femi records in two places: his Sales Log and the Egg Movement Tracker - these should match"],
+    ["", "3", "Femi records in two places: his Sales Log and the Egg Movement Tracker — these should match"],
 ]
 
 logic_ws.update(logic_content, "A1")
@@ -1141,6 +1143,164 @@ logic_requests.append({
 target_book.batch_update({"requests": logic_requests})
 
 print("Done! Logic & Definitions sheet created.")
+
+
+# --- Quick Guide Sheet (management-friendly explainer) ---
+print("Writing Quick Guide sheet...")
+
+try:
+    guide_ws = target_book.worksheet("Quick Guide")
+except gspread.exceptions.WorksheetNotFound:
+    guide_ws = target_book.add_worksheet("Quick Guide", rows=50, cols=3)
+
+guide_ws.clear()
+guide_id = guide_ws.id
+
+guide_content = [
+    ["PULLUS Egg Dashboard — Quick Guide", "", ""],
+    ["", "", ""],
+    ["AT A GLANCE", "", ""],
+    ["", "Current Holding", "Top of the main dashboard. Tells you how many eggs we physically have in stock right now."],
+    ["", "TOTAL row, Unaccounted", "Should be 0. Higher means eggs we can't explain — investigate."],
+    ["", "", ""],
+    ["THREE METRICS TO WATCH", "", ""],
+    ["", "Unaccounted", "Eggs we can't reconcile. Each non-zero value is either a data entry error or an actual missing egg."],
+    ["", "Transfer Variance", "Gap between what Victor sent to Abuja and what Femi recorded as received. Should be 0."],
+    ["", "Tracker variances (last two columns)", "Gap between physical shipment records and sales. Should be 0."],
+    ["", "", ""],
+    ["WHAT EACH SECTION MEANS", "", ""],
+    ["", "Teal — PURCHASE", "What we bought from suppliers in Kaduna"],
+    ["", "Blue — SALES (All Staff)", "What we sold across all staff sheets — broken, cracked, samples included"],
+    ["", "Amber — P vs S", "Reconciliation. Surpluses roll forward as Eggs Carried In; real losses get bucketed in Unaccounted."],
+    ["", "Purple — VICTOR → FEMI", "Internal egg transfers from Kaduna to Abuja"],
+    ["", "Brown — EGG MOVEMENT TRACKER", "Physical shipment ground truth from the tracker sheet"],
+    ["", "", ""],
+    ["NUMBER COLORS", "", ""],
+    ["", "Green bold", "Positive — surplus or reconciled. Good."],
+    ["", "Red bold", "Negative — deficit or variance. Needs attention."],
+    ["", "", ""],
+    ["WORKED EXAMPLE", "", ""],
+    ["", "Feb: bought 19,800, used 19,200", "Surplus of 600 eggs left over. Carried into March."],
+    ["", "Mar: bought 24,960, used 25,560", "The 600 from Feb covered the gap — net 0, no real loss."],
+    ["", "If 50 eggs go truly missing later", "Unaccounted will show 50 in that month's row. That's your alert."],
+    ["", "", ""],
+    ["RED FLAGS", "", ""],
+    ["", "Unaccounted > 0", "Check that month's sales sheets, broken-loss entries, and sample records"],
+    ["", "Transfer Variance keeps growing", "Sit Victor and Femi together to reconcile their logs"],
+    ["", "Eggs On Hand keeps growing", "Sales lagging? Stock sitting too long? Theft hiding as inventory?"],
+    ["", "", ""],
+    ["NEED MORE DETAIL?", "", ""],
+    ["", "Logic & Definitions tab", "Column-by-column technical reference"],
+]
+
+guide_ws.update(guide_content, "A1")
+
+# Format the guide sheet
+guide_requests = []
+
+# Title row
+guide_requests.append({
+    "repeatCell": {
+        "range": {"sheetId": guide_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 3},
+        "cell": {"userEnteredFormat": {
+            "backgroundColor": rgb(DARK_NAVY),
+            "textFormat": {"foregroundColor": rgb(WHITE), "bold": True, "fontSize": 14},
+            "horizontalAlignment": "CENTER",
+        }},
+        "fields": "userEnteredFormat",
+    }
+})
+guide_requests.append({
+    "mergeCells": {
+        "range": {"sheetId": guide_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 3},
+        "mergeType": "MERGE_ALL",
+    }
+})
+
+# Section header rows (col A has bold text, merged across 3 cols)
+section_header_rows_guide = [
+    (2, STEEL_BLUE),    # AT A GLANCE
+    (6, DARK_AMBER),    # THREE METRICS TO WATCH
+    (11, DEEP_TEAL),    # WHAT EACH SECTION MEANS
+    (18, DARK_GRAY),    # NUMBER COLORS
+    (22, STEEL_BLUE),   # WORKED EXAMPLE
+    (27, "#CC0000"),    # RED FLAGS (warning red)
+    (32, DEEP_PURPLE),  # NEED MORE DETAIL?
+]
+for row_idx, color in section_header_rows_guide:
+    guide_requests.append({
+        "repeatCell": {
+            "range": {"sheetId": guide_id, "startRowIndex": row_idx, "endRowIndex": row_idx + 1, "startColumnIndex": 0, "endColumnIndex": 3},
+            "cell": {"userEnteredFormat": {
+                "backgroundColor": rgb(color),
+                "textFormat": {"foregroundColor": rgb(WHITE), "bold": True, "fontSize": 11},
+            }},
+            "fields": "userEnteredFormat",
+        }
+    })
+    guide_requests.append({
+        "mergeCells": {
+            "range": {"sheetId": guide_id, "startRowIndex": row_idx, "endRowIndex": row_idx + 1, "startColumnIndex": 0, "endColumnIndex": 3},
+            "mergeType": "MERGE_ALL",
+        }
+    })
+
+# Column widths
+guide_col_widths = [60, 280, 600]
+for i, w in enumerate(guide_col_widths):
+    guide_requests.append({
+        "updateDimensionProperties": {
+            "range": {"sheetId": guide_id, "dimension": "COLUMNS", "startIndex": i, "endIndex": i + 1},
+            "properties": {"pixelSize": w},
+            "fields": "pixelSize",
+        }
+    })
+
+# Wrap text on column C
+guide_requests.append({
+    "repeatCell": {
+        "range": {"sheetId": guide_id, "startRowIndex": 0, "endRowIndex": len(guide_content), "startColumnIndex": 2, "endColumnIndex": 3},
+        "cell": {"userEnteredFormat": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE"}},
+        "fields": "userEnteredFormat(wrapStrategy,verticalAlignment)",
+    }
+})
+
+# Bold for column B labels
+guide_requests.append({
+    "repeatCell": {
+        "range": {"sheetId": guide_id, "startRowIndex": 0, "endRowIndex": len(guide_content), "startColumnIndex": 1, "endColumnIndex": 2},
+        "cell": {"userEnteredFormat": {"textFormat": {"bold": True, "foregroundColor": rgb(CHARCOAL)}}},
+        "fields": "userEnteredFormat.textFormat(bold,foregroundColor)",
+    }
+})
+
+# Trim grid
+guide_requests.append({
+    "updateSheetProperties": {
+        "properties": {
+            "sheetId": guide_id,
+            "gridProperties": {
+                "rowCount": len(guide_content),
+                "columnCount": 3,
+            },
+        },
+        "fields": "gridProperties.rowCount,gridProperties.columnCount",
+    }
+})
+
+# Apply Lato across the guide sheet
+guide_requests.append({
+    "repeatCell": {
+        "range": {"sheetId": guide_id, "startRowIndex": 0, "endRowIndex": len(guide_content), "startColumnIndex": 0, "endColumnIndex": 3},
+        "cell": {"userEnteredFormat": {"textFormat": {"fontFamily": "Lato"}}},
+        "fields": "userEnteredFormat.textFormat.fontFamily",
+    }
+})
+
+target_book.batch_update({"requests": guide_requests})
+
+print("Done! Quick Guide sheet created.")
+
 
 # --- Send Breakage Alerts to Google Space ---
 if breakage_alerts and GOOGLE_SPACE_WEBHOOK_URL:
