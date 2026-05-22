@@ -200,6 +200,8 @@ print("Reading sales data...")
 
 # Aggregated sales across all staff: {(year,month): {"eggs":0, "cracked":0, "broken":0}}
 sales_monthly = defaultdict(lambda: {"eggs": 0, "cracked": 0, "broken": 0})
+# Sample eggs (given out, not sold): {(year,month): pieces}
+samples_monthly = defaultdict(float)
 # Victor Abuja eggs: {(year,month): pieces}
 victor_abuja = defaultdict(float)
 # Femi Abuja eggs: {(year,month): {"eggs":0, "cracked":0, "broken":0}}
@@ -234,9 +236,10 @@ for staff_name, sheet_id in SALES_STAFF.items():
     product_col = find_col(headers, "Product Type")
     crates_col = find_col(headers, "Crates")
     pieces_col = find_col(headers, "Pieces")
+    status_col = find_col(headers, "Status")
 
     print(f"    Columns: Date={date_col}, State={state_col}, Product={product_col}, "
-          f"Crates={crates_col}, Pieces={pieces_col}")
+          f"Crates={crates_col}, Pieces={pieces_col}, Status={status_col}")
 
     for row in all_vals[header_row_idx + 1:]:
         date_val = safe_get(row, date_col)
@@ -250,8 +253,14 @@ for staff_name, sheet_id in SALES_STAFF.items():
 
         pieces = parse_num(safe_get(row, pieces_col))
         state = str(safe_get(row, state_col)).strip().lower()
+        status = str(safe_get(row, status_col)).strip().lower()
         key = parsed
         staff_with_egg_sales.add(staff_name)
+
+        # Samples are eggs given out, not sold -- track separately and skip sales accumulation
+        if status == "sample":
+            samples_monthly[key] += pieces
+            continue
 
         # Victor Abuja -- track separately (these are transfers, not end sales)
         is_victor_abuja = staff_name == "Victor" and state == "abuja"
@@ -391,24 +400,28 @@ for tab_name, cutoff_date in TRACKER_TABS.items():
 print(f"  Found {len(breakage_alerts)} shipments exceeding {BREAKAGE_THRESHOLD}% threshold")
 
 
-# --- Hash-based change detection (only in CI) ---
+# --- Hash-based change detection (only on scheduled CI runs) ---
 IS_CI = os.environ.get("GITHUB_ACTIONS") == "true"
+IS_SCHEDULED = IS_CI and os.environ.get("GITHUB_EVENT_NAME") == "schedule"
 now_wat = wat_now()
 previous_state = None
 new_state = {}
 
 if IS_CI:
-    print("\nChecking for data changes...")
     current_hash = compute_data_hash(purchase_data, all_sales_raw, all_tracker_raw)
-
     previous_state = fetch_data_state()
-    if previous_state and previous_state.get("hash") == current_hash:
-        print("  No changes detected in source data. Skipping update.")
-        previous_state["last_checked"] = now_wat
-        save_data_state(previous_state)
-        exit(0)
 
-    print("  Data has changed (or first run). Proceeding with update...")
+    if IS_SCHEDULED:
+        print("\nChecking for data changes...")
+        if previous_state and previous_state.get("hash") == current_hash:
+            print("  No changes detected in source data. Skipping update.")
+            previous_state["last_checked"] = now_wat
+            save_data_state(previous_state)
+            exit(0)
+        print("  Data has changed (or first run). Proceeding with update...")
+    else:
+        print("\nManual CI run — skipping hash check, forcing update.")
+
     new_state = {
         "hash": current_hash,
         "last_checked": now_wat,
@@ -422,6 +435,7 @@ else:
 all_keys = set()
 all_keys.update(purchase_monthly.keys())
 all_keys.update(sales_monthly.keys())
+all_keys.update(samples_monthly.keys())
 all_keys.update(victor_abuja.keys())
 all_keys.update(femi_abuja.keys())
 all_keys.update(tracker_monthly.keys())
@@ -446,8 +460,9 @@ for key in sorted_keys:
     broken_sold = s["broken"]  # tracked for reconciliation, not counted as sales
     cracked_sold = s["cracked"]
     total_sold = good_sold + cracked_sold  # broken eggs are losses, not sales
+    samples = samples_monthly[key]
 
-    variance = usable - total_sold - broken_sold
+    variance = usable - total_sold - broken_sold - samples
 
     v_sent = victor_abuja[key]
     f_data = femi_abuja[key]
@@ -469,7 +484,7 @@ for key in sorted_keys:
     rows.append([
         month, year,
         crates, total_eggs, broken_p, cracked_p, usable,
-        good_sold, broken_sold, cracked_sold, total_sold,
+        good_sold, broken_sold, cracked_sold, total_sold, samples,
         variance,
         v_sent, f_good, f_broken, f_cracked, transfer_var,
         t_shipped, t_delivered, t_broken, t_cracked,
@@ -506,7 +521,7 @@ COLUMN_HEADERS = [
     "Month", "Year",
     "Crates Purchased", "Total Eggs Purchased", "Broken Eggs (Purchase)",
     "Cracked Eggs (Purchase)", "Eggs Available for Sale",
-    "Good Eggs Sold", "Broken Eggs (Loss)", "Cracked Eggs Sold", "Total Eggs Sold",
+    "Good Eggs Sold", "Broken Eggs (Loss)", "Cracked Eggs Sold", "Total Eggs Sold", "Samples",
     "Surplus / Deficit",
     "Victor Eggs Sent (Abuja)", "Femi Good Eggs (Abuja)", "Femi Broken (Abuja)",
     "Femi Cracked (Abuja)", "Transfer Variance (Sent - Received)",
@@ -530,9 +545,9 @@ section_row = [""] * num_cols
 section_row[0] = "Period"
 section_row[2] = "PURCHASE"
 section_row[7] = "SALES (All Staff)"
-section_row[11] = "P vs S"
-section_row[12] = "VICTOR \u2192 FEMI (Abuja)"
-section_row[17] = "EGG MOVEMENT TRACKER (Kaduna \u2192 Abuja)"
+section_row[12] = "P vs S"
+section_row[13] = "VICTOR \u2192 FEMI (Abuja)"
+section_row[18] = "EGG MOVEMENT TRACKER (Kaduna \u2192 Abuja)"
 all_output.append(section_row)
 # Row 3: column headers
 all_output.append(COLUMN_HEADERS)
@@ -630,7 +645,7 @@ requests.append({
     }
 })
 # Section header merges (row 2)
-section_merges = [(0, 2), (2, 7), (7, 11), (11, 12), (12, 17), (17, 23)]
+section_merges = [(0, 2), (2, 7), (7, 12), (12, 13), (13, 18), (18, 24)]
 for start, end in section_merges:
     requests.append({
         "mergeCells": {
@@ -668,10 +683,10 @@ requests.append({
 section_colors = [
     (0, 2, DARK_GRAY),
     (2, 7, DEEP_TEAL),
-    (7, 11, STEEL_BLUE),
-    (11, 12, DARK_AMBER),
-    (12, 17, DEEP_PURPLE),
-    (17, 23, DARK_BROWN),
+    (7, 12, STEEL_BLUE),
+    (12, 13, DARK_AMBER),
+    (13, 18, DEEP_PURPLE),
+    (18, 24, DARK_BROWN),
 ]
 for start, end, color in section_colors:
     requests.append({
@@ -686,10 +701,10 @@ for start, end, color in section_colors:
 col_header_colors = [
     (0, 2, LIGHT_GRAY, CHARCOAL),
     (2, 7, LIGHT_TEAL, CHARCOAL),
-    (7, 11, LIGHT_BLUE, CHARCOAL),
-    (11, 12, LIGHT_AMBER, CHARCOAL),
-    (12, 17, LIGHT_PURPLE, CHARCOAL),
-    (17, 23, LIGHT_BROWN, CHARCOAL),
+    (7, 12, LIGHT_BLUE, CHARCOAL),
+    (12, 13, LIGHT_AMBER, CHARCOAL),
+    (13, 18, LIGHT_PURPLE, CHARCOAL),
+    (18, 24, LIGHT_BROWN, CHARCOAL),
 ]
 for start, end, bg, fg in col_header_colors:
     fmt = cell_format(bg, fg, bold=True, h_align="CENTER")
@@ -738,7 +753,7 @@ for i in range(len(rows)):
     })
 
     # Conditional color for variance columns (L=11, Q=16, V=21, W=22)
-    for var_col in [11, 16, 21, 22]:
+    for var_col in [12, 17, 22, 23]:
         val = rows[i][var_col]
         text_color = "#0A7A0A" if val >= 0 else "#CC0000"
         requests.append({
@@ -787,7 +802,7 @@ requests.append({
     }
 })
 # Variance color in totals row
-for var_col in [11, 16, 21, 22]:
+for var_col in [12, 17, 22, 23]:
     val = totals_row[var_col]
     text_color = "#0A7A0A" if val >= 0 else "#CC0000"
     requests.append({
@@ -829,7 +844,7 @@ requests.append({
 
 # Thicker borders between sections
 thick_border = {"style": "SOLID_MEDIUM", "color": rgb(CHARCOAL)}
-section_boundaries = [0, 2, 7, 11, 12, 17]
+section_boundaries = [0, 2, 7, 12, 13, 18]
 for col in section_boundaries:
     requests.append({
         "updateBorders": {
@@ -871,18 +886,19 @@ col_widths = [
     65,  # I: Broken Eggs Sold
     65,  # J: Cracked Eggs Sold
     75,  # K: Total Eggs Sold
-    75,  # L: Surplus / Deficit
-    75,  # M: Victor Eggs Sent
-    75,  # N: Femi Good Eggs
-    65,  # O: Femi Broken
-    65,  # P: Femi Cracked
-    80,  # Q: Transfer Variance
-    75,  # R: Tracker Shipped
-    75,  # S: Tracker Delivered
-    65,  # T: Transit Broken
-    65,  # U: Transit Cracked
-    80,  # V: Victor vs Tracker
-    80,  # W: Tracker vs Femi
+    65,  # L: Samples
+    75,  # M: Surplus / Deficit
+    75,  # N: Victor Eggs Sent
+    75,  # O: Femi Good Eggs
+    65,  # P: Femi Broken
+    65,  # Q: Femi Cracked
+    80,  # R: Transfer Variance
+    75,  # S: Tracker Shipped
+    75,  # T: Tracker Delivered
+    65,  # U: Transit Broken
+    65,  # V: Transit Cracked
+    80,  # W: Victor vs Tracker
+    80,  # X: Tracker vs Femi
 ]
 for i, width in enumerate(col_widths):
     requests.append({
@@ -951,9 +967,10 @@ logic_content = [
     ["", "Broken Eggs (Loss)", "Broken eggs recorded in sales sheets - these are losses, not sales"],
     ["", "Cracked Eggs Sold", "Cracked eggs sold at a lower price"],
     ["", "Total Eggs Sold", "Good + Cracked only. Broken eggs are excluded because they are losses"],
+    ["", "Samples", "Eggs given out as samples (Status = 'sample' in the sales sheet). Not counted as sales but still reduce inventory"],
     ["", "", ""],
     ["P vs S", "", ""],
-    ["", "Surplus / Deficit", "Eggs Available for Sale minus Total Eggs Sold minus Broken Eggs (Loss)"],
+    ["", "Surplus / Deficit", "Eggs Available for Sale minus Total Eggs Sold minus Broken Eggs (Loss) minus Samples"],
     ["", "", "Positive = stock remaining or sales not yet recorded"],
     ["", "", "Negative = sold more than purchased that month (using prior stock)"],
     ["", "", ""],
@@ -1018,10 +1035,10 @@ logic_requests.append({
 section_rows_colors = [
     (4, DEEP_TEAL),    # PURCHASE
     (11, STEEL_BLUE),  # SALES
-    (19, DARK_AMBER),  # P vs S
-    (24, DEEP_PURPLE), # VICTOR to FEMI
-    (33, DARK_BROWN),  # TRACKER
-    (41, DARK_GRAY),   # NOTES
+    (20, DARK_AMBER),  # P vs S
+    (25, DEEP_PURPLE), # VICTOR to FEMI
+    (34, DARK_BROWN),  # TRACKER
+    (42, DARK_GRAY),   # NOTES
 ]
 for row_idx, color in section_rows_colors:
     logic_requests.append({
