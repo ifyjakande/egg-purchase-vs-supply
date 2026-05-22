@@ -1121,12 +1121,15 @@ section_rows_colors = [
     (49, DARK_GRAY),   # NOTES
 ]
 for row_idx, color in section_rows_colors:
+    # Full-row colored banner across all 3 columns. Label sits in col A, description in col C,
+    # both on the same colored background — looks like a proper section header.
     logic_requests.append({
         "repeatCell": {
-            "range": {"sheetId": logic_id, "startRowIndex": row_idx, "endRowIndex": row_idx + 1, "startColumnIndex": 0, "endColumnIndex": 1},
+            "range": {"sheetId": logic_id, "startRowIndex": row_idx, "endRowIndex": row_idx + 1, "startColumnIndex": 0, "endColumnIndex": 3},
             "cell": {"userEnteredFormat": {
                 "backgroundColor": rgb(color),
                 "textFormat": {"foregroundColor": rgb(WHITE), "bold": True},
+                "verticalAlignment": "MIDDLE",
             }},
             "fields": "userEnteredFormat",
         }
