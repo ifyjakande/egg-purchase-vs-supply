@@ -23,7 +23,7 @@ SALES_WORKSHEET = "Daily Sales Log"
 TRACKER_WORKSHEET = "Kaduna to Abuja"
 
 TRACKER_TABS = {
-    "Kaduna to Abuja": datetime(2026, 3, 10),
+    TRACKER_WORKSHEET: datetime(2026, 3, 10),
     "Kaduna to Kano": datetime(2026, 2, 27),
     "Kaduna Local Sales": datetime(2026, 1, 1),
 }
@@ -670,8 +670,8 @@ requests.append({
         "rows": [{
             "values": [{
                 "textFormatRuns": [
-                    {"startIndex": 0, "format": {"fontSize": 14, "bold": True, "foregroundColor": rgb(WHITE)}},
-                    {"startIndex": timestamp_start, "format": {"fontSize": 9, "bold": False, "italic": True, "foregroundColor": rgb("#B0B0B0")}},
+                    {"startIndex": 0, "format": {"fontFamily": "Lato", "fontSize": 14, "bold": True, "foregroundColor": rgb(WHITE)}},
+                    {"startIndex": timestamp_start, "format": {"fontFamily": "Lato", "fontSize": 9, "bold": False, "italic": True, "foregroundColor": rgb("#B0B0B0")}},
                 ]
             }]
         }],
@@ -723,7 +723,7 @@ for i in range(len(rows)):
     row_idx = data_start_row + i
     bg = ROW_WHITE if i % 2 == 0 else ROW_ALT
 
-    # Base format: alternating bg, center aligned
+    # Base format: alternating bg, center aligned, reset text format (clears stale bold/color from prior layouts)
     requests.append({
         "repeatCell": {
             "range": grid_range(row_idx, row_idx + 1, 0, num_cols),
@@ -731,9 +731,10 @@ for i in range(len(rows)):
                 "userEnteredFormat": {
                     "backgroundColor": rgb(bg),
                     "horizontalAlignment": "CENTER",
+                    "textFormat": {"bold": False, "foregroundColor": rgb(CHARCOAL)},
                 }
             },
-            "fields": "userEnteredFormat(backgroundColor,horizontalAlignment)",
+            "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,textFormat)",
         }
     })
 
@@ -930,6 +931,15 @@ requests.append({
     }
 })
 
+# Apply Lato font family across the entire sheet (runs last so it wins over broader masks)
+requests.append({
+    "repeatCell": {
+        "range": grid_range(0, total_rows, 0, num_cols),
+        "cell": {"userEnteredFormat": {"textFormat": {"fontFamily": "Lato"}}},
+        "fields": "userEnteredFormat.textFormat.fontFamily",
+    }
+})
+
 # Execute all formatting
 target_book.batch_update({"requests": requests})
 
@@ -1083,6 +1093,15 @@ logic_requests.append({
             },
         },
         "fields": "gridProperties.rowCount,gridProperties.columnCount",
+    }
+})
+
+# Apply Lato font family across the logic sheet (runs last so it wins over broader masks)
+logic_requests.append({
+    "repeatCell": {
+        "range": {"sheetId": logic_id, "startRowIndex": 0, "endRowIndex": len(logic_content), "startColumnIndex": 0, "endColumnIndex": 3},
+        "cell": {"userEnteredFormat": {"textFormat": {"fontFamily": "Lato"}}},
+        "fields": "userEnteredFormat.textFormat.fontFamily",
     }
 })
 
