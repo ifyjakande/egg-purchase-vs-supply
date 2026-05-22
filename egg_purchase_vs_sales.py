@@ -1065,6 +1065,11 @@ logic_content = [
     ["", "Victor Sent vs Tracker Shipped", "Victor's figure minus Tracker shipped - should ideally be zero"],
     ["", "Tracker Delivered vs Femi Sold", "Tracker delivered minus Femi's total sales - should ideally be zero"],
     ["", "", ""],
+    ["METHODOLOGY", "", ""],
+    ["", "Why Total Purchased (not Available)", "An earlier version used 'Eggs Available for Sale' (Total Eggs minus Broken on Arrival) as the reconciliation base and ALSO deducted Broken Loss from the sales side. That double-counted the broken-on-arrival eggs and produced phantom monthly deficits of -1, -2, -6 etc. (those numbers were really just the count of arrival breakage). Fix: reconcile against Total Eggs Purchased directly. Broken Loss already includes arrival breakage, so this avoids the double-deduction. 'Eggs Available for Sale' was removed entirely; Broken/Damaged Eggs (Purchase) stays only as a supplier-quality metric."],
+    ["", "Asymmetric carry-over", "Surplus (positive S/D) rolls forward as next month's Eggs Carried In, mirroring physical inventory. Deficit (negative S/D) does NOT spill into next month — it's bucketed in Unaccounted so a bad data month doesn't pollute the next month's reconciliation."],
+    ["", "TOTAL row special-cases", "Eggs Carried In = 0 (period start). Eggs On Hand = latest month's value (current physical holding). Surplus/Deficit = current holding minus cumulative unaccounted (avoids double-counting carry-overs that were already consumed)."],
+    ["", "", ""],
     ["NOTES", "", ""],
     ["", "1", "Tracker data is filtered to 2026 onwards. Purchase and sales sheets are read as-is — make sure source sheets only contain current data."],
     ["", "2", f"Staff with egg sales currently: {', '.join(sorted(staff_with_egg_sales))}"],
@@ -1112,7 +1117,8 @@ section_rows_colors = [
     (19, DARK_AMBER),  # P vs S
     (27, DEEP_PURPLE), # VICTOR to FEMI
     (36, DARK_BROWN),  # TRACKER
-    (44, DARK_GRAY),   # NOTES
+    (44, DARK_NAVY),   # METHODOLOGY
+    (49, DARK_GRAY),   # NOTES
 ]
 for row_idx, color in section_rows_colors:
     logic_requests.append({
@@ -1218,8 +1224,12 @@ guide_content = [
     ["", "Transfer Variance keeps growing", "Sit Victor and Femi together to reconcile their logs"],
     ["", "Eggs On Hand keeps growing", "Sales lagging? Stock sitting too long? Theft hiding as inventory?"],
     ["", "", ""],
+    ["WHY IT'S DESIGNED THIS WAY", "", ""],
+    ["", "Reconciliation base", "We reconcile against Total Eggs Purchased — not 'Eggs Available for Sale' (which was removed). Broken/Damaged Eggs (Purchase) is supplier-quality info only; those eggs are already counted in Broken Eggs (Loss). The earlier formula counted them twice and created phantom 1, 2, 6-egg deficits that weren't real."],
+    ["", "Surplus rolls, Deficit doesn't", "Real surplus = physical stock carried forward. Real deficit = data error or actual loss, bucketed in Unaccounted so it doesn't pollute the next month."],
+    ["", "", ""],
     ["NEED MORE DETAIL?", "", ""],
-    ["", "Logic & Definitions tab", "Column-by-column technical reference"],
+    ["", "Logic & Definitions tab", "Column-by-column technical reference, plus full METHODOLOGY notes"],
 ]
 
 guide_ws.update(guide_content, "A1")
@@ -1253,8 +1263,9 @@ section_header_rows_guide = [
     (11, DEEP_TEAL),    # WHAT EACH SECTION MEANS
     (18, DARK_GRAY),    # NUMBER COLORS
     (22, STEEL_BLUE),   # WORKED EXAMPLE
-    (27, "#CC0000"),    # RED FLAGS (warning red)
-    (32, DEEP_PURPLE),  # NEED MORE DETAIL?
+    (27, "#CC0000"),    # RED FLAGS
+    (32, DARK_NAVY),    # WHY IT'S DESIGNED THIS WAY
+    (36, DEEP_PURPLE),  # NEED MORE DETAIL?
 ]
 for row_idx, color in section_header_rows_guide:
     guide_requests.append({
