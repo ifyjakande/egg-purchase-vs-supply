@@ -457,7 +457,6 @@ for key in sorted_keys:
     total_eggs = p["total_eggs"]
     broken_p = p["broken"]
     cracked_p = p["cracked"]
-    usable = total_eggs - broken_p  # informational: eggs intact on arrival (cracked still sellable)
 
     good_sold = s["eggs"]
     broken_sold = s["broken"]  # broken loss recorded in sales — already includes arrival breakage
@@ -491,7 +490,7 @@ for key in sorted_keys:
 
     rows.append([
         month, year,
-        crates, total_eggs, broken_p, cracked_p, usable,
+        crates, total_eggs, broken_p, cracked_p,
         good_sold, broken_sold, cracked_sold, total_sold, samples,
         prior_surplus, adjusted_sd, unaccounted, carried_forward,
         v_sent, f_good, f_broken, f_cracked, transfer_var,
@@ -527,8 +526,8 @@ sheet_id = target_ws.id
 # Build output: title (row 1), section headers (row 2), column headers (row 3), data (row 4+)
 COLUMN_HEADERS = [
     "Month", "Year",
-    "Crates Purchased", "Total Eggs Purchased", "Broken Eggs (Purchase)",
-    "Cracked Eggs (Purchase)", "Eggs Available for Sale",
+    "Crates Purchased", "Total Eggs Purchased", "Broken/Damaged Eggs (Purchase)",
+    "Cracked Eggs (Purchase)",
     "Good Eggs Sold", "Broken Eggs (Loss)", "Cracked Eggs Sold", "Total Eggs Sold", "Samples",
     "Eggs Carried In", "Surplus / Deficit", "Unaccounted", "Eggs On Hand",
     "Victor Eggs Sent (Abuja)", "Femi Good Eggs (Abuja)", "Femi Broken (Abuja)",
@@ -563,8 +562,8 @@ VARIANCE_COLS = [
 # Column widths keyed by header name (pixels).
 COL_WIDTHS = {
     "Month": 70, "Year": 45,
-    "Crates Purchased": 70, "Total Eggs Purchased": 75, "Broken Eggs (Purchase)": 65,
-    "Cracked Eggs (Purchase)": 65, "Eggs Available for Sale": 75,
+    "Crates Purchased": 70, "Total Eggs Purchased": 75,
+    "Broken/Damaged Eggs (Purchase)": 80, "Cracked Eggs (Purchase)": 75,
     "Good Eggs Sold": 75, "Broken Eggs (Loss)": 65, "Cracked Eggs Sold": 65,
     "Total Eggs Sold": 75, "Samples": 65,
     "Eggs Carried In": 70, "Surplus / Deficit": 75, "Unaccounted": 75, "Eggs On Hand": 75,
@@ -601,7 +600,8 @@ title_main = "PULLUS - Egg Purchase vs Sales Monthly Summary"
 title_separator = "  |  "
 title_timestamp = f"Last Updated: {now_wat}"
 title_holding = f"Current Holding: {current_holding:,} eggs"
-title_text = title_main + title_separator + title_holding + title_separator + title_timestamp
+title_reconciliation = "Reconciliation: Total Eggs Purchased (PURCHASE sheet) + Eggs Carried In  =  Good Eggs Sold + Broken Eggs (Loss) + Cracked Eggs Sold + Samples (all from SALES sheets) + Eggs On Hand + Unaccounted"
+title_text = title_main + title_separator + title_holding + title_separator + title_timestamp + "\n" + title_reconciliation
 title_row = ["", ""] + [title_text] + [""] * (num_cols - 3)
 all_output.append(title_row)
 # Row 2: section headers (only first cell of each section)
@@ -738,16 +738,21 @@ for start, end in section_merges:
     })
 
 # --- Title row format ---
+title_cell_fmt = cell_format(DARK_NAVY, WHITE, bold=True, font_size=14, h_align="CENTER")
+title_cell_fmt["verticalAlignment"] = "MIDDLE"
+title_cell_fmt["wrapStrategy"] = "WRAP"  # let the reconciliation subtitle wrap onto its own line
 requests.append({
     "repeatCell": {
         "range": grid_range(0, 1, 0, num_cols),
-        "cell": {"userEnteredFormat": cell_format(DARK_NAVY, WHITE, bold=True, font_size=14, h_align="CENTER")},
+        "cell": {"userEnteredFormat": title_cell_fmt},
         "fields": "userEnteredFormat",
     }
 })
-# Format runs: main title bold 14pt, Current Holding bold 11pt (prominent), timestamp italic gray 9pt
+# Format runs: main title bold 14pt, Current Holding bold 11pt (prominent),
+# timestamp italic gray 9pt, reconciliation subtitle non-bold 10pt lighter
 holding_run_start = len(title_main)  # where "  |  Current Holding..." begins
 timestamp_run_start = holding_run_start + len(title_separator) + len(title_holding)  # where "  |  Last Updated..." begins
+reconciliation_run_start = timestamp_run_start + len(title_separator) + len(title_timestamp) + 1  # after "\n"
 requests.append({
     "updateCells": {
         "range": grid_range(0, 1, 2, 3),  # C1 only (merged title cell)
@@ -757,10 +762,19 @@ requests.append({
                     {"startIndex": 0, "format": {"fontFamily": "Lato", "fontSize": 14, "bold": True, "foregroundColor": rgb(WHITE)}},
                     {"startIndex": holding_run_start, "format": {"fontFamily": "Lato", "fontSize": 11, "bold": True, "foregroundColor": rgb(WHITE)}},
                     {"startIndex": timestamp_run_start, "format": {"fontFamily": "Lato", "fontSize": 9, "bold": False, "italic": True, "foregroundColor": rgb("#B0B0B0")}},
+                    {"startIndex": reconciliation_run_start, "format": {"fontFamily": "Lato", "fontSize": 10, "bold": False, "italic": False, "foregroundColor": rgb("#D8D8D8")}},
                 ]
             }]
         }],
         "fields": "textFormatRuns",
+    }
+})
+# Make title row tall enough to fit both lines (reconciliation may wrap on narrower sheets)
+requests.append({
+    "updateDimensionProperties": {
+        "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+        "properties": {"pixelSize": 60},
+        "fields": "pixelSize",
     }
 })
 
@@ -1009,12 +1023,11 @@ logic_content = [
     ["", "", ""],
     ["SECTION", "COLUMN", "WHAT IT MEANS"],
     ["", "", ""],
-    ["PURCHASE", "", "Eggs bought from suppliers in Kaduna"],
+    ["PURCHASE", "", "Eggs bought from suppliers in Kaduna. Reconciles against the sales side: Total Eggs Purchased (PURCHASE) + Eggs Carried In = Good Sold + Broken Loss + Cracked Sold + Samples (all from SALES sheets) + Eggs On Hand + Unaccounted."],
     ["", "Crates Purchased", "Total crates bought that month"],
-    ["", "Total Eggs Purchased", "Crates × Eggs per Crate (defaults to 30 when not set in the source sheet)"],
-    ["", "Broken Eggs (Purchase)", "Broken on arrival from supplier — cannot be sold. Note: these same eggs are also captured in Broken Eggs (Loss) on the sales side, so reconciliation uses Total Eggs Purchased (not Available)."],
-    ["", "Cracked Eggs (Purchase)", "Cracked on arrival — still sold at a lower price"],
-    ["", "Eggs Available for Sale", "Total Eggs minus Broken (Purchase). Informational; the P vs S reconciliation uses Total Eggs Purchased."],
+    ["", "Total Eggs Purchased", "Crates × Eggs per Crate (defaults to 30 when not set in the source sheet). This is the reconciliation base."],
+    ["", "Broken/Damaged Eggs (Purchase)", "Broken on arrival from supplier — observational only. These same eggs are also captured in Broken Eggs (Loss) on the sales side, so they are NOT a separate loss for reconciliation."],
+    ["", "Cracked Eggs (Purchase)", "Cracked on arrival — still sold at a lower price. Observational; the cracked eggs sold side captures the same eggs."],
     ["", "", ""],
     ["SALES (All Staff)", "", "Actual egg sales to end customers"],
     ["", "", "Victor's Abuja entries are excluded here to avoid double counting."],
@@ -1093,11 +1106,11 @@ logic_requests.append({
 # Section name cells -- bold with section colors
 section_rows_colors = [
     (4, DEEP_TEAL),    # PURCHASE
-    (11, STEEL_BLUE),  # SALES
-    (20, DARK_AMBER),  # P vs S
-    (28, DEEP_PURPLE), # VICTOR to FEMI
-    (37, DARK_BROWN),  # TRACKER
-    (45, DARK_GRAY),   # NOTES
+    (10, STEEL_BLUE),  # SALES
+    (19, DARK_AMBER),  # P vs S
+    (27, DEEP_PURPLE), # VICTOR to FEMI
+    (36, DARK_BROWN),  # TRACKER
+    (44, DARK_GRAY),   # NOTES
 ]
 for row_idx, color in section_rows_colors:
     logic_requests.append({
@@ -1402,15 +1415,18 @@ if MGMT_TARGET and rows:
             "mergeCells": {"range": mgmt_grid(1, 2, start, end), "mergeType": "MERGE_ALL"}
         })
 
-    # Title row format
+    # Title row format (wrap-enabled so the reconciliation subtitle wraps within the narrower sheet)
+    mgmt_title_fmt = cell_format(DARK_NAVY, WHITE, bold=True, font_size=14, h_align="CENTER")
+    mgmt_title_fmt["verticalAlignment"] = "MIDDLE"
+    mgmt_title_fmt["wrapStrategy"] = "WRAP"
     mgmt_requests.append({
         "repeatCell": {
             "range": mgmt_grid(0, 1, 0, mgmt_num_cols),
-            "cell": {"userEnteredFormat": cell_format(DARK_NAVY, WHITE, bold=True, font_size=14, h_align="CENTER")},
+            "cell": {"userEnteredFormat": mgmt_title_fmt},
             "fields": "userEnteredFormat",
         }
     })
-    # Title text runs (reuse holding_run_start/timestamp_run_start computed for main)
+    # Title text runs (reuse the run offsets computed for main)
     mgmt_requests.append({
         "updateCells": {
             "range": mgmt_grid(0, 1, 2, 3),
@@ -1420,10 +1436,19 @@ if MGMT_TARGET and rows:
                         {"startIndex": 0, "format": {"fontFamily": "Lato", "fontSize": 14, "bold": True, "foregroundColor": rgb(WHITE)}},
                         {"startIndex": holding_run_start, "format": {"fontFamily": "Lato", "fontSize": 11, "bold": True, "foregroundColor": rgb(WHITE)}},
                         {"startIndex": timestamp_run_start, "format": {"fontFamily": "Lato", "fontSize": 9, "bold": False, "italic": True, "foregroundColor": rgb("#B0B0B0")}},
+                        {"startIndex": reconciliation_run_start, "format": {"fontFamily": "Lato", "fontSize": 10, "bold": False, "italic": False, "foregroundColor": rgb("#D8D8D8")}},
                     ]
                 }]
             }],
             "fields": "textFormatRuns",
+        }
+    })
+    # Taller title row to fit reconciliation subtitle (mgmt sheet is narrower, so it may wrap to multiple lines)
+    mgmt_requests.append({
+        "updateDimensionProperties": {
+            "range": {"sheetId": mgmt_id, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+            "properties": {"pixelSize": 80},
+            "fields": "pixelSize",
         }
     })
 
