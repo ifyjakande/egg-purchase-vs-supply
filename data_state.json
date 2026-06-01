@@ -1,6 +1,8 @@
 {
-  "hash": "5d813bc902a22afe87f6b0b8a071d84140e4c753b600c646fd6976931b456abb",
-  "last_checked": "Jun 01, 2026 08:08 PM WAT",
-  "last_updated": "Jun 01, 2026 08:08 PM WAT",
-  "alerted_shipments": []
+  "hash": "bf416dac066aa4ce9e633f7d3c1e8e6b000042b74c1f2ee9d03b236a2a48d9d0",
+  "last_checked": "Jun 01, 2026 11:21 PM WAT",
+  "last_updated": "Jun 01, 2026 11:21 PM WAT",
+  "alerted_shipments": [
+    "827a7128637fec8b"
+  ]
 }
