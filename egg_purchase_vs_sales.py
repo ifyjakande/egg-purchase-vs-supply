@@ -207,6 +207,8 @@ sales_monthly = defaultdict(lambda: {"eggs": 0, "cracked": 0, "broken": 0})
 samples_monthly = defaultdict(float)
 # Victor Abuja eggs: {(year,month): pieces}
 victor_abuja = defaultdict(float)
+# Timothy CR eggs -- consignments to Femi, same treatment as Victor's Abuja sends: {(year,month): pieces}
+timothy_cr = defaultdict(float)
 # Femi Abuja eggs: {(year,month): {"eggs":0, "cracked":0, "broken":0}}
 femi_abuja = defaultdict(lambda: {"eggs": 0, "cracked": 0, "broken": 0})
 # Track which staff have egg sales
@@ -238,12 +240,12 @@ for staff_idx, (staff_name, sheet_id) in enumerate(SALES_STAFF.items(), 1):
     date_col = find_col(headers, "Date")
     state_col = find_col(headers, "State")
     product_col = find_col(headers, "Product Type")
-    crates_col = find_col(headers, "Crates")
     pieces_col = find_col(headers, "Pieces")
     status_col = find_col(headers, "Status")
+    cr_col = find_col(headers, "CR")  # consignment marker; only present in Victor/Timothy sheets
 
     print(f"    Columns: Date={date_col}, State={state_col}, Product={product_col}, "
-          f"Crates={crates_col}, Pieces={pieces_col}, Status={status_col}")
+          f"Pieces={pieces_col}, Status={status_col}, CR={cr_col}")
 
     for row in all_vals[header_row_idx + 1:]:
         date_val = safe_get(row, date_col)
@@ -258,6 +260,7 @@ for staff_idx, (staff_name, sheet_id) in enumerate(SALES_STAFF.items(), 1):
         pieces = parse_num(safe_get(row, pieces_col))
         state = str(safe_get(row, state_col)).strip().lower()
         status = str(safe_get(row, status_col)).strip().lower()
+        cr_flag = str(safe_get(row, cr_col)).strip().lower()  # "yes" marks a CR consignment row
         key = parsed
         staff_with_egg_sales.add(staff_name)
 
@@ -271,9 +274,15 @@ for staff_idx, (staff_name, sheet_id) in enumerate(SALES_STAFF.items(), 1):
         if is_victor_abuja and product_type == "eggs":
             victor_abuja[key] += pieces
 
+        # Timothy CR -- Timothy logs the CR egg consignments to Femi (marked "Yes" in the CR
+        # column). Same treatment as Victor's Abuja sends: a transfer to Femi, not an end sale.
+        is_timothy_cr = staff_name == "Timothy" and cr_flag == "yes"
+        if is_timothy_cr and product_type == "eggs":
+            timothy_cr[key] += pieces
+
         # Classify product into Sales (All Staff)
-        # Exclude Victor's Abuja entries -- Femi captures the actual Abuja sales
-        if not is_victor_abuja:
+        # Exclude Victor's Abuja and Timothy's CR entries -- Femi captures the actual sales
+        if not is_victor_abuja and not is_timothy_cr:
             if product_type == "eggs":
                 sales_monthly[key]["eggs"] += pieces
             elif product_type == "cracked egg":
@@ -441,6 +450,7 @@ all_keys.update(purchase_monthly.keys())
 all_keys.update(sales_monthly.keys())
 all_keys.update(samples_monthly.keys())
 all_keys.update(victor_abuja.keys())
+all_keys.update(timothy_cr.keys())
 all_keys.update(femi_abuja.keys())
 all_keys.update(tracker_monthly.keys())
 
@@ -474,12 +484,14 @@ for key in sorted_keys:
     prev_carry = carried_forward
 
     v_sent = victor_abuja[key]
+    ti_sent = timothy_cr[key]
+    total_sent = v_sent + ti_sent  # Victor + Timothy both transfer to Femi in Abuja
     f_data = femi_abuja[key]
     f_good = f_data["eggs"]
     f_broken = f_data["broken"]
     f_cracked = f_data["cracked"]
     f_total_received = f_good + f_broken + f_cracked
-    transfer_var = v_sent - f_total_received
+    transfer_var = total_sent - f_total_received
 
     # Tracker data
     t = tracker_monthly[key]
@@ -487,7 +499,7 @@ for key in sorted_keys:
     t_delivered = t["delivered"]
     t_broken = t["broken"]
     t_cracked = t["cracked"]
-    t_victor_vs_tracker = v_sent - t_shipped
+    t_sent_vs_tracker = total_sent - t_shipped
     t_delivered_vs_femi = t_delivered - f_total_received
 
     rows.append([
@@ -495,9 +507,9 @@ for key in sorted_keys:
         crates, total_eggs, broken_p, cracked_p,
         good_sold, broken_sold, cracked_sold, total_sold, samples,
         prior_surplus, adjusted_sd, unaccounted, carried_forward,
-        v_sent, f_good, f_broken, f_cracked, transfer_var,
+        v_sent, ti_sent, f_good, f_broken, f_cracked, transfer_var,
         t_shipped, t_delivered, t_broken, t_cracked,
-        t_victor_vs_tracker, t_delivered_vs_femi,
+        t_sent_vs_tracker, t_delivered_vs_femi,
     ])
 
 
@@ -532,10 +544,10 @@ COLUMN_HEADERS = [
     "Cracked Eggs (Purchase)",
     "Good Eggs Sold", "Broken Eggs (Loss)", "Cracked Eggs Sold", "Total Eggs Sold", "Samples",
     "Eggs Carried In", "Surplus / Deficit", "Unaccounted", "Eggs On Hand",
-    "Victor Eggs Sent (Abuja)", "Femi Good Eggs (Abuja)", "Femi Broken (Abuja)",
-    "Femi Cracked (Abuja)", "Transfer Variance (Sent - Received)",
+    "Victor Eggs Sent (Abuja)", "Timothy Eggs Sent (CR)", "Femi Good Eggs (Abuja)",
+    "Femi Broken (Abuja)", "Femi Cracked (Abuja)", "Transfer Variance (Sent - Received)",
     "Tracker Shipped", "Tracker Delivered", "Transit Broken",
-    "Transit Cracked", "Victor Sent vs Tracker Shipped", "Tracker Delivered vs Femi Sold",
+    "Transit Cracked", "Sent vs Tracker Shipped", "Tracker Delivered vs Femi Sold",
 ]
 
 # Name -> index lookup. All downstream code references columns by name, so
@@ -549,7 +561,7 @@ SECTIONS_DEF = [
     ("PURCHASE", "Crates Purchased"),
     ("SALES (All Staff)", "Good Eggs Sold"),
     ("P vs S", "Eggs Carried In"),
-    ("VICTOR → FEMI (Abuja)", "Victor Eggs Sent (Abuja)"),
+    ("VICTOR & TIMOTHY → FEMI (Abuja)", "Victor Eggs Sent (Abuja)"),
     ("EGG MOVEMENT TRACKER (Kaduna → Abuja)", "Tracker Shipped"),
 ]
 
@@ -557,7 +569,7 @@ SECTIONS_DEF = [
 VARIANCE_COLS = [
     "Surplus / Deficit",
     "Transfer Variance (Sent - Received)",
-    "Victor Sent vs Tracker Shipped",
+    "Sent vs Tracker Shipped",
     "Tracker Delivered vs Femi Sold",
 ]
 
@@ -569,11 +581,12 @@ COL_WIDTHS = {
     "Good Eggs Sold": 75, "Broken Eggs (Loss)": 65, "Cracked Eggs Sold": 65,
     "Total Eggs Sold": 75, "Samples": 65,
     "Eggs Carried In": 70, "Surplus / Deficit": 75, "Unaccounted": 75, "Eggs On Hand": 75,
-    "Victor Eggs Sent (Abuja)": 75, "Femi Good Eggs (Abuja)": 75,
+    "Victor Eggs Sent (Abuja)": 75, "Timothy Eggs Sent (CR)": 75,
+    "Femi Good Eggs (Abuja)": 75,
     "Femi Broken (Abuja)": 65, "Femi Cracked (Abuja)": 65,
     "Transfer Variance (Sent - Received)": 80,
     "Tracker Shipped": 75, "Tracker Delivered": 75, "Transit Broken": 65,
-    "Transit Cracked": 65, "Victor Sent vs Tracker Shipped": 80,
+    "Transit Cracked": 65, "Sent vs Tracker Shipped": 80,
     "Tracker Delivered vs Femi Sold": 80,
 }
 
@@ -713,7 +726,7 @@ SECTION_COLORS = {
     "PURCHASE": (DEEP_TEAL, LIGHT_TEAL),
     "SALES (All Staff)": (STEEL_BLUE, LIGHT_BLUE),
     "P vs S": (DARK_AMBER, LIGHT_AMBER),
-    "VICTOR → FEMI (Abuja)": (DEEP_PURPLE, LIGHT_PURPLE),
+    "VICTOR & TIMOTHY → FEMI (Abuja)": (DEEP_PURPLE, LIGHT_PURPLE),
     "EGG MOVEMENT TRACKER (Kaduna → Abuja)": (DARK_BROWN, LIGHT_BROWN),
 }
 
@@ -840,7 +853,7 @@ for i in range(len(rows)):
         }
     })
 
-    # Conditional color for variance columns (L=11, Q=16, V=21, W=22)
+    # Conditional color (green positive / red negative) for variance columns
     for var_col in [COL[n] for n in VARIANCE_COLS]:
         val = rows[i][var_col]
         text_color = "#0A7A0A" if val >= 0 else "#CC0000"
@@ -1032,8 +1045,8 @@ logic_content = [
     ["", "Cracked Eggs (Purchase)", "Cracked on arrival — still sold at a lower price. Observational; the cracked eggs sold side captures the same eggs."],
     ["", "", ""],
     ["SALES (All Staff)", "", "Actual egg sales to end customers"],
-    ["", "", "Victor's Abuja entries are excluded here to avoid double counting."],
-    ["", "", "Victor transfers eggs to Femi in Abuja. Femi sells them to customers. If we count both, those eggs are counted twice. So for Abuja, we only use Femi's records. Victor's other sales (e.g. Kano) are included."],
+    ["", "", "Victor's Abuja transfers and Timothy's CR consignments are excluded here to avoid double counting."],
+    ["", "", "Victor and Timothy both transfer eggs to Femi in Abuja (Timothy's are flagged 'Yes' in his CR column). Femi sells them to customers. If we count both the transfer and Femi's sale, those eggs are counted twice. So we only use Femi's records for these. Victor's other sales (e.g. Kano) are still included."],
     ["", "Good Eggs Sold", "Whole eggs sold to customers"],
     ["", "Broken Eggs (Loss)", "Broken eggs recorded in sales sheets — losses, not sales. Includes arrival breakage (same eggs as Broken (Purchase))."],
     ["", "Cracked Eggs Sold", "Cracked eggs sold at a lower price"],
@@ -1048,21 +1061,22 @@ logic_content = [
     ["", "Unaccounted", "Eggs we couldn't reconcile (= abs(Surplus/Deficit) when negative). Likely data capture errors or actual missing eggs."],
     ["", "Eggs On Hand", "Eggs left in inventory at end of month (= Surplus/Deficit when positive, else 0). The LATEST month's value is our CURRENT HOLDING."],
     ["", "", ""],
-    ["VICTOR to FEMI (Abuja)", "", "Egg transfer from Victor in Kaduna to Femi in Abuja"],
+    ["VICTOR & TIMOTHY to FEMI (Abuja)", "", "Egg transfers to Femi in Abuja. Victor logs his sends (State = Abuja); Timothy logs the CR consignments (CR column = Yes). Both are excluded from SALES (All Staff) and reconciled against Femi's actual sales."],
     ["", "Victor Eggs Sent", "Whole eggs Victor logged as sent to Abuja (only the 'eggs' product type — cracked/broken Abuja entries from Victor are not tracked here)"],
+    ["", "Timothy Eggs Sent (CR)", "Whole eggs Timothy logged as CR consignments to Femi (CR column = Yes, 'eggs' product type only)"],
     ["", "Femi Good Eggs", "Good eggs Femi sold in Abuja"],
     ["", "Femi Broken", "Broken eggs Femi sold in Abuja"],
     ["", "Femi Cracked", "Cracked eggs Femi sold in Abuja"],
-    ["", "Transfer Variance", "Victor sent minus Femi's total (good + broken + cracked)"],
-    ["", "", "Positive = Femi hasn't sold or recorded everything Victor sent"],
-    ["", "", "Negative = Femi sold more than Victor sent that month (using prior stock)"],
+    ["", "Transfer Variance", "Victor + Timothy sent minus Femi's total (good + broken + cracked)"],
+    ["", "", "Positive = Femi hasn't sold or recorded everything that was sent"],
+    ["", "", "Negative = Femi sold more than was sent that month (using prior stock)"],
     ["", "", ""],
     ["EGG MOVEMENT TRACKER", "", "Separate tracker sheet recording physical shipments from Kaduna to Abuja"],
     ["", "Tracker Shipped", "Eggs loaded and sent from Kaduna"],
     ["", "Tracker Delivered", "Eggs that arrived intact (Shipped minus breakage)"],
     ["", "Transit Broken", "Eggs broken during transport"],
     ["", "Transit Cracked", "Eggs cracked during transport"],
-    ["", "Victor Sent vs Tracker Shipped", "Victor's figure minus Tracker shipped - should ideally be zero"],
+    ["", "Sent vs Tracker Shipped", "Victor + Timothy sent minus Tracker shipped - should ideally be zero"],
     ["", "Tracker Delivered vs Femi Sold", "Tracker delivered minus Femi's total sales - should ideally be zero"],
     ["", "", ""],
     ["METHODOLOGY", "", ""],
@@ -1115,10 +1129,10 @@ section_rows_colors = [
     (4, DEEP_TEAL),    # PURCHASE
     (10, STEEL_BLUE),  # SALES
     (19, DARK_AMBER),  # P vs S
-    (27, DEEP_PURPLE), # VICTOR to FEMI
-    (36, DARK_BROWN),  # TRACKER
-    (44, DARK_NAVY),   # METHODOLOGY
-    (49, DARK_GRAY),   # NOTES
+    (27, DEEP_PURPLE), # VICTOR & TIMOTHY to FEMI
+    (37, DARK_BROWN),  # TRACKER
+    (45, DARK_NAVY),   # METHODOLOGY
+    (50, DARK_GRAY),   # NOTES
 ]
 for row_idx, color in section_rows_colors:
     # Full-row colored banner across all 3 columns. Label sits in col A, description in col C,
@@ -1203,14 +1217,14 @@ guide_content = [
     ["", "", ""],
     ["THREE METRICS TO WATCH", "", ""],
     ["", "Unaccounted", "Eggs we can't reconcile. Each non-zero value is either a data entry error or an actual missing egg."],
-    ["", "Transfer Variance", "Gap between what Victor sent to Abuja and what Femi recorded as received. Should be 0."],
+    ["", "Transfer Variance", "Gap between what Victor + Timothy sent to Femi in Abuja and what Femi recorded as received. Should be 0."],
     ["", "Tracker variances (last two columns)", "Gap between physical shipment records and sales. Should be 0."],
     ["", "", ""],
     ["WHAT EACH SECTION MEANS", "", ""],
     ["", "Teal — PURCHASE", "What we bought from suppliers in Kaduna"],
     ["", "Blue — SALES (All Staff)", "What we sold across all staff sheets — broken, cracked, samples included"],
     ["", "Amber — P vs S", "Reconciliation. Surpluses roll forward as Eggs Carried In; real losses get bucketed in Unaccounted."],
-    ["", "Purple — VICTOR → FEMI", "Internal egg transfers from Kaduna to Abuja"],
+    ["", "Purple — VICTOR & TIMOTHY → FEMI", "Internal egg transfers to Femi in Abuja (Victor's sends + Timothy's CR consignments)"],
     ["", "Brown — EGG MOVEMENT TRACKER", "Physical shipment ground truth from the tracker sheet"],
     ["", "", ""],
     ["NUMBER COLORS", "", ""],
@@ -1224,7 +1238,7 @@ guide_content = [
     ["", "", ""],
     ["RED FLAGS", "", ""],
     ["", "Unaccounted > 0", "Check that month's sales sheets, broken-loss entries, and sample records"],
-    ["", "Transfer Variance keeps growing", "Sit Victor and Femi together to reconcile their logs"],
+    ["", "Transfer Variance keeps growing", "Sit Victor, Timothy and Femi together to reconcile their logs"],
     ["", "Eggs On Hand keeps growing", "Sales lagging? Stock sitting too long? Theft hiding as inventory?"],
     ["", "", ""],
     ["WHY IT'S DESIGNED THIS WAY", "", ""],
