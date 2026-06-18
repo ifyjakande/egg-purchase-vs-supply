@@ -274,9 +274,10 @@ for staff_idx, (staff_name, sheet_id) in enumerate(SALES_STAFF.items(), 1):
         if is_victor_abuja and product_type == "eggs":
             victor_abuja[key] += pieces
 
-        # Timothy CR -- Timothy logs the CR egg consignments to Femi (marked "Yes" in the CR
-        # column). Same treatment as Victor's Abuja sends: a transfer to Femi, not an end sale.
-        is_timothy_cr = staff_name == "Timothy" and cr_flag == "yes"
+        # Timothy CR -- Timothy logs the CR egg consignments to Femi in Abuja (marked "Yes"
+        # in the CR column). Same treatment as Victor's Abuja sends: a transfer, not an end
+        # sale. Scoped to Abuja because CR sales to other states are real end sales.
+        is_timothy_cr = staff_name == "Timothy" and cr_flag == "yes" and state == "abuja"
         if is_timothy_cr and product_type == "eggs":
             timothy_cr[key] += pieces
 
@@ -1063,7 +1064,7 @@ logic_content = [
     ["", "", ""],
     ["VICTOR & TIMOTHY to FEMI (Abuja)", "", "Egg transfers to Femi in Abuja. Victor logs his sends (State = Abuja); Timothy logs the CR consignments (CR column = Yes). Both are excluded from SALES (All Staff) and reconciled against Femi's actual sales."],
     ["", "Victor Eggs Sent", "Whole eggs Victor logged as sent to Abuja (only the 'eggs' product type — cracked/broken Abuja entries from Victor are not tracked here)"],
-    ["", "Timothy Eggs Sent (CR)", "Whole eggs Timothy logged as CR consignments to Femi (CR column = Yes, 'eggs' product type only)"],
+    ["", "Timothy Eggs Sent (CR)", "Whole eggs Timothy logged as CR consignments to Femi in Abuja (CR column = Yes, State = Abuja, 'eggs' product type only)"],
     ["", "Femi Good Eggs", "Good eggs Femi sold in Abuja"],
     ["", "Femi Broken", "Broken eggs Femi sold in Abuja"],
     ["", "Femi Cracked", "Cracked eggs Femi sold in Abuja"],
